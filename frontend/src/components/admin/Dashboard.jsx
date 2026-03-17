@@ -36,7 +36,7 @@ export default function Dashboard({ setActiveTab }) {
                 "Good evening";
 
   return (
-    <div>
+    <div style={{ width: "100%" }}>
       {/* Greeting */}
       <div style={{ marginBottom: 40 }}>
         <h1 style={{ fontSize: font.h1, fontWeight: 800, color: colors.textPrimary, margin: 0 }}>

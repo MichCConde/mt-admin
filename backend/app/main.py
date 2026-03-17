@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import attendance, eod
+from app.routers import attendance, eod, inspector
 
 app = FastAPI(title="MT Admin API")
 
@@ -17,6 +17,7 @@ app.add_middleware(
 
 app.include_router(attendance.router, prefix="/api/attendance", tags=["Attendance"])
 app.include_router(eod.router,        prefix="/api/eod",        tags=["EOD"])
+app.include_router(inspector.router,  prefix="/api/inspector",  tags=["Inspector"])
 
 @app.get("/health")
 def health():

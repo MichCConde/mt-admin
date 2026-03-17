@@ -2,25 +2,28 @@ import { useState } from "react";
 import {
   LayoutDashboard,
   ClipboardList,
+  UserSearch,
   BarChart3,
   ShieldAlert,
   CalendarDays,
   ChevronRight,
 } from "lucide-react";
 import { colors, font, radius } from "../../styles/tokens";
-import Dashboard from "../admin/Dashboard";
-import VAReports from "../admin/VaReports";
+import Dashboard   from "../admin/Dashboard";
+import VAReports   from "../admin/VaReports";
+import VAInspector from "../admin/VaInspector";
 import { SoonBadge } from "../ui/Badge";
 
 const NAV = [
-  { id: "dashboard",  icon: LayoutDashboard, label: "Dashboard", sub: "Overview",         component: Dashboard },
-  { id: "va_reports", icon: ClipboardList,   label: "VA Reports", sub: "EOD & Attendance", component: VAReports },
+  { id: "dashboard",   icon: LayoutDashboard, label: "Dashboard",    sub: "Overview",         component: Dashboard   },
+  { id: "va_reports",  icon: ClipboardList,   label: "VA Reports",   sub: "EOD & Attendance", component: VAReports   },
+  { id: "va_inspector",icon: UserSearch,      label: "VA Inspector", sub: "Per-VA history",   component: VAInspector },
 ];
 
 const NAV_SOON = [
-  { icon: BarChart3,    label: "EOM Reports"     },
-  { icon: ShieldAlert,  label: "Strike Tracker"  },
-  { icon: CalendarDays, label: "Schedule"         },
+  { icon: BarChart3,    label: "EOM Reports"    },
+  { icon: ShieldAlert,  label: "Strike Tracker" },
+  { icon: CalendarDays, label: "Schedule"        },
 ];
 
 export default function Layout() {
@@ -152,7 +155,7 @@ export default function Layout() {
         </header>
 
         {/* Scrollable page content — full width */}
-        <main style={{ flex: 1, overflowY: "auto", padding: "36px 40px" }}>
+        <main style={{ flex: 1, overflowY: "auto", padding: "36px 40px", width: "100%", boxSizing: "border-box" }}>
           <ActivePage setActiveTab={setActiveTab} />
         </main>
       </div>
