@@ -3,6 +3,7 @@ import { signInWithEmailAndPassword } from "firebase/auth";
 import { auth }                      from "../../firebase";
 import { colors, font, radius, shadow } from "../../styles/tokens";
 import { Lock, Mail, AlertTriangle }  from "lucide-react";
+import { logActivity, LOG_TYPES }     from "../../utils/logger";
 
 export default function Login() {
   const [email,    setEmail]    = useState("");
@@ -16,8 +17,9 @@ export default function Login() {
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      // useAuth in App.jsx handles everything after this —
-      // it checks Firestore and either lets them in or shows "Access Denied"
+      // auth.currentUser is now set — log the sign-in
+      logActivity(LOG_TYPES.SIGN_IN, `${email} signed in`);
+      // useAuth in App.jsx takes over from here
     } catch (err) {
       setError(friendlyError(err.code));
     } finally {
@@ -34,7 +36,7 @@ export default function Login() {
           <img
             src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png"
             alt="Monster Task"
-            style={{ width: 160, objectFit: "contain" }}
+            style={{ width: 96, objectFit: "contain" }}
           />
         </div>
 
@@ -68,8 +70,8 @@ export default function Login() {
                 placeholder="you@monstertask.com"
                 required autoComplete="email"
                 style={s.input}
-                onFocus={(e)  => e.target.style.borderColor = colors.teal}
-                onBlur={(e)   => e.target.style.borderColor = colors.border}
+                onFocus={(e) => e.target.style.borderColor = colors.teal}
+                onBlur={(e)  => e.target.style.borderColor = colors.border}
               />
             </div>
           </div>
@@ -84,8 +86,8 @@ export default function Login() {
                 placeholder="••••••••"
                 required autoComplete="current-password"
                 style={s.input}
-                onFocus={(e)  => e.target.style.borderColor = colors.teal}
-                onBlur={(e)   => e.target.style.borderColor = colors.border}
+                onFocus={(e) => e.target.style.borderColor = colors.teal}
+                onBlur={(e)  => e.target.style.borderColor = colors.border}
               />
             </div>
           </div>

@@ -1,31 +1,49 @@
 import os
+import json
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
 from fastapi import Depends, Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # ── Initialize Firebase Admin SDK once ───────────────────────────
+# Supports two modes:
+#   1. FIREBASE_SERVICE_ACCOUNT_JSON env var (recommended for Render/prod)
+#      Set this to the full JSON content of your service account key.
+#   2. FIREBASE_SERVICE_ACCOUNT_PATH file path (local dev fallback)
+#      Defaults to backend/serviceAccountKey.json
+
 if not firebase_admin._apps:
-    sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "serviceAccountKey.json")
+    sa_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 
-    base_dir = os.path.dirname(
-        os.path.dirname(
-            os.path.dirname(os.path.abspath(__file__))
+    if sa_json:
+        # Production: load from env var (Render secret)
+        try:
+            sa_dict = json.loads(sa_json)
+            cred = credentials.Certificate(sa_dict)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON: {e}\n"
+                "Make sure you pasted the full service account key JSON as the env var value."
+            )
+    else:
+        # Local dev: load from file
+        sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "serviceAccountKey.json")
+        base_dir = os.path.dirname(
+            os.path.dirname(
+                os.path.dirname(os.path.abspath(__file__))
+            )
         )
-    )
-    full_path = os.path.join(base_dir, sa_path)
+        full_path = os.path.join(base_dir, sa_path)
 
-    if not os.path.exists(full_path):
-        raise RuntimeError(
-            f"Firebase service account file not found at: {full_path}\n"
-            "Steps to fix:\n"
-            "  1. Go to Firebase Console → Project Settings → Service Accounts\n"
-            "  2. Click 'Generate new private key' — saves a .json file\n"
-            "  3. Copy that file to: backend/service_account.json\n"
-            "  4. Make sure FIREBASE_SERVICE_ACCOUNT_PATH=service_account.json in backend/.env"
-        )
+        if not os.path.exists(full_path):
+            raise RuntimeError(
+                f"Firebase service account not found.\n"
+                "For local dev: copy your service account JSON to backend/serviceAccountKey.json\n"
+                "For production: set the FIREBASE_SERVICE_ACCOUNT_JSON environment variable\n"
+                "  (Go to Firebase Console → Project Settings → Service Accounts → Generate new private key)"
+            )
+        cred = credentials.Certificate(full_path)
 
-    cred = credentials.Certificate(full_path)
     firebase_admin.initialize_app(cred)
 
 # ── Bearer token extractor ────────────────────────────────────────
@@ -34,12 +52,8 @@ security = HTTPBearer(auto_error=False)
 
 async def verify_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = Depends(security),  # ← wired correctly
+    credentials: HTTPAuthorizationCredentials = Depends(security),
 ) -> dict:
-    """
-    FastAPI dependency — verifies the Firebase ID token sent in the
-    Authorization: Bearer <token> header on every protected request.
-    """
     if request.url.path == "/health":
         return {}
 

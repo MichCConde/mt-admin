@@ -1,14 +1,61 @@
-# Python
+# ── Python ────────────────────────────────────────────────────────
 backend/venv/
+backend/.venv/
 backend/__pycache__/
+backend/**/__pycache__/
 backend/*.pyc
+backend/**/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/.Python
+backend/*.egg-info/
+backend/dist/
+backend/build/
+
+# ── Backend secrets ───────────────────────────────────────────────
 backend/.env
+backend/.env.*
 backend/serviceAccountKey.json
+backend/service_account.json
 
-# Node
+# ── Node ──────────────────────────────────────────────────────────
 frontend/node_modules/
-frontend/dist/
-frontend/.env
+frontend/.pnp
+frontend/.pnp.js
 
-# Firebase
+# ── Frontend build output ─────────────────────────────────────────
+frontend/dist/
+frontend/dist-ssr/
+frontend/.vite/
+
+# ── Frontend secrets ──────────────────────────────────────────────
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# Keep .env.production so VITE_API_URL survives the Firebase build step.
+# Remove this line if you set VITE_API_URL via CI env vars instead.
+# frontend/.env.production
+
+# ── Firebase ──────────────────────────────────────────────────────
 .firebase/
+.firebaserc.local
+
+# ── OS / Editor ───────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+
+# ── Logs ─────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

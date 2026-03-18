@@ -6,6 +6,7 @@ import Button                           from "../ui/Button";
 import { Card, SectionLabel, ControlBar, PageHeader, StatRow } from "../ui/Structure";
 import { Select, NumberInput }          from "../ui/Inputs";
 import { Avatar, StatCard, StatusBox, Tag, CommunityBadge, StatusBadge } from "../ui/Indicators";
+import { logActivity, LOG_TYPES }       from "../../utils/logger";
 
 const MONTHS = [
   "January","February","March","April","May","June",
@@ -40,6 +41,7 @@ export default function VAInspector() {
       setData(await apiFetch(
         `/api/inspector?va_name=${encodeURIComponent(vaName)}&year=${year}&month=${month}`
       ));
+      logActivity(LOG_TYPES.VA_INSPECT, `Inspected ${vaName} for ${MONTHS[month - 1]} ${year}`, { va: vaName, month, year });
     } catch (e) {
       setError(e.message);
     } finally {

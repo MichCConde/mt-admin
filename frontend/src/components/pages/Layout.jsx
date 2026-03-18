@@ -1,22 +1,25 @@
 import { useState } from "react";
 import {
   LayoutDashboard, ClipboardList, UserSearch,
-  CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut,
+  CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut, ScrollText,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
 import { auth }   from "../../firebase";
 import { colors, font, radius } from "../../styles/tokens";
-import Dashboard   from "../admin/Dashboard";
-import VAReports   from "../admin/VaReports";
-import VAInspector from "../admin/VaInspector";
-import Schedule    from "../admin/Schedule";
+import Dashboard    from "../admin/Dashboard";
+import VAReports    from "../admin/VaReports";
+import VAInspector  from "../admin/VaInspector";
+import Schedule     from "../admin/Schedule";
+import ActivityLogs from "../admin/ActivityLogs";
 import { SoonBadge } from "../ui/Indicators";
+import { logActivity, LOG_TYPES } from "../../utils/logger";
 
 const NAV = [
-  { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",    sub: "Overview",         component: Dashboard   },
-  { id: "va_reports",   icon: ClipboardList,   label: "VA Reports",   sub: "EOD & Attendance", component: VAReports   },
-  { id: "va_inspector", icon: UserSearch,      label: "VA Inspector", sub: "Per-VA history",   component: VAInspector },
-  { id: "schedule",     icon: CalendarDays,    label: "Schedule",     sub: "Shift overview",   component: Schedule    },
+  { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",      sub: "Overview",         component: Dashboard    },
+  { id: "va_reports",   icon: ClipboardList,   label: "VA Reports",     sub: "EOD & Attendance", component: VAReports    },
+  { id: "va_inspector", icon: UserSearch,      label: "VA Inspector",   sub: "Per-VA history",   component: VAInspector  },
+  { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
+  { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
 ];
 
 const NAV_SOON = [
@@ -136,7 +139,10 @@ export default function Layout({ user }) {
             {user?.email}
           </div>
           <button
-            onClick={() => signOut(auth)}
+            onClick={async () => {
+              await logActivity(LOG_TYPES.SIGN_OUT, `${user?.email} signed out`);
+              signOut(auth);
+            }}
             style={{
               display:      "flex",
               alignItems:   "center",

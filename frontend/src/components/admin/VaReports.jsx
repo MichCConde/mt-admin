@@ -7,6 +7,7 @@ import { Card, SectionLabel, ControlBar, PageHeader, TabBar, StatRow } from "../
 import { DataTable }                    from "../ui/Tables";
 import { DateInput }                    from "../ui/Inputs";
 import { StatCard, StatusBox, CommunityBadge, StatusBadge } from "../ui/Indicators";
+import { logActivity, LOG_TYPES }       from "../../utils/logger";
 
 const yesterday = () => {
   const d = new Date();
@@ -52,7 +53,10 @@ function EODChecker() {
 
   async function runCheck() {
     setLoading(true); setError(""); setData(null);
-    try   { setData(await apiFetch(`/api/eod?date=${date}`)); }
+    try {
+      setData(await apiFetch(`/api/eod?date=${date}`));
+      logActivity(LOG_TYPES.EOD_CHECK, `EOD check run for ${date}`, { date });
+    }
     catch (e) { setError(e.message); }
     finally   { setLoading(false); }
   }
@@ -61,6 +65,7 @@ function EODChecker() {
     setEmailing(true); setEmailOk(false);
     try {
       await apiFetch(`/api/email/send-report/${date}`, { method: "POST" });
+      logActivity(LOG_TYPES.EMAIL_SENT, `EOD report emailed for ${date}`, { date });
       setEmailOk(true);
       setTimeout(() => setEmailOk(false), 3000);
     } catch (e) {
@@ -226,7 +231,10 @@ function AttendanceChecker() {
 
   async function runCheck() {
     setLoading(true); setError(""); setData(null);
-    try   { setData(await apiFetch(`/api/attendance?date=${date}`)); }
+    try {
+      setData(await apiFetch(`/api/attendance?date=${date}`));
+      logActivity(LOG_TYPES.ATTENDANCE_CHECK, `Attendance check run for ${date}`, { date });
+    }
     catch (e) { setError(e.message); }
     finally   { setLoading(false); }
   }

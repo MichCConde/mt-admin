@@ -10,8 +10,17 @@ router = APIRouter()
 
 
 def prev_workday(d: datetime, offset: int = 1) -> str:
-    """Go back `offset` calendar days from d and return YYYY-MM-DD."""
-    return (d - timedelta(days=offset)).strftime("%Y-%m-%d")
+    """
+    Go back `offset` workdays (Mon–Sat) from d and return YYYY-MM-DD.
+    Skips Sunday since VAs don't submit EOD reports on Sundays.
+    """
+    current = d
+    steps = 0
+    while steps < offset:
+        current = current - timedelta(days=1)
+        if current.weekday() != 6:   # 6 = Sunday
+            steps += 1
+    return current.strftime("%Y-%m-%d")
 
 
 def get_missing_for_date(vas: list, date_str: str) -> set[str]:
