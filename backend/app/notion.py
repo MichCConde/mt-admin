@@ -16,8 +16,16 @@ DB = {
 }
 
 EST            = timezone(timedelta(hours=-5))
-GRACE_MINUTES  = 15   # grace period before marking late
-EOD_CUTOFF_HOUR = 18  # fallback EOD cutoff: 6 PM EST
+PHT            = timezone(timedelta(hours=+8))
+GRACE_MINUTES  = 15    # grace period before marking late
+EOD_CUTOFF_HOUR = 18   # fallback EOD cutoff: 6 PM EST
+
+# ── Timezone notes ────────────────────────────────────────────────
+# Notion API always returns created_time / last_edited_time in UTC.
+# The Notion workspace UI displays these in PHT (UTC+8) for PH-based users.
+# We always convert UTC → EST (UTC-5) for display in this app.
+# Text fields (Time In, Time Out, Shift Time) are typed by VAs in EST
+# (client's timezone) per EOD form instructions — no conversion needed.
 
 
 # ── Property extractor ────────────────────────────────────────────
@@ -161,13 +169,14 @@ def clock_in_punctuality(created_at: str, time_in_str: str) -> dict:
 
 ACTIVE_STATUSES     = {"Active"}
 ACTIVE_EMP_STATUSES = {"Employee"}
-ALLOWED_TEAMS       = {"VA Team"}     # exclude Internal, Project Based, etc.
+ALLOWED_TEAMS       = {"VA Team"}
+EXCLUDED_TEAMS      = {"Internal", "Project Based"}   # never show these
 
 def get_active_vas() -> list[dict]:
     """
-    Active VA Team employees only.
-    Filters: Status=Active, Emp Status=Employee, Team contains VA Team.
-    Python-level guard is applied on top of Notion API filters.
+    Returns Active + Employee + VA Team VAs only.
+    Internal and Project Based team members are always excluded.
+    Filters applied at Notion API level AND Python level for safety.
     """
     pages = query_all(DB["va"], {
         "and": [
@@ -182,22 +191,23 @@ def get_active_vas() -> list[dict]:
         name       = get_prop(p, "Name").strip()
         status     = get_prop(p, "Status")
         emp_status = get_prop(p, "Emp Status")
-        teams      = get_prop(p, "Team")  # list
+        teams      = get_prop(p, "Team")   # list of strings
 
-        # Python-level safety guard
-        if not name:                                          continue
-        if status     not in ACTIVE_STATUSES:                continue
-        if emp_status not in ACTIVE_EMP_STATUSES:            continue
-        if not any(t in ALLOWED_TEAMS for t in teams):       continue
-        if "Internal" in teams:                              continue  # belt-and-suspenders
+        # Python-level safety guards
+        if not name:                                            continue
+        if status      not in ACTIVE_STATUSES:                 continue
+        if emp_status  not in ACTIVE_EMP_STATUSES:             continue
+        if not any(t in ALLOWED_TEAMS for t in teams):         continue
+        if any(t in EXCLUDED_TEAMS for t in teams):            continue
 
         vas.append({
             "id":           p["id"],
             "name":         name,
             "community":    get_prop(p, "Community "),   # trailing space intentional
             "email":        get_prop(p, "MT Email Address"),
-            "schedule":     get_prop(p, "Schedule"),
-            "shift_time":   get_prop(p, "Shift Time"),
+            "schedule":     get_prop(p, "Schedule"),       # "Mon - Fri" / "Mon - Sun" / "Flexible"
+            "shift_time":   get_prop(p, "Shift Time"),     # freeform EST text
+            "schedule_notes": get_prop(p, "Schedule Notes"),
             "contract_ids": get_prop(p, "Contracts"),
             "status":       status,
         })

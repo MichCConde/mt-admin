@@ -1,31 +1,18 @@
-import { ClipboardList, Clock, BarChart3, ShieldAlert, CalendarDays, ArrowRight } from "lucide-react";
+import { ClipboardList, Clock, BarChart3, ShieldAlert, CalendarDays, ArrowRight, UserSearch } from "lucide-react";
 import { colors, font, radius, shadow } from "../../styles/tokens";
 import { SectionLabel } from "../ui/Card";
 import { SoonBadge } from "../ui/Badge";
 
 const QUICK_ACTIONS = [
-  {
-    icon:   ClipboardList,
-    title:  "EOD Reports",
-    sub:    "Check who submitted their end-of-day report",
-    tab:    "va_reports",
-    accent: colors.teal,
-    bg:     colors.tealLight,
-  },
-  {
-    icon:   Clock,
-    title:  "Attendance",
-    sub:    "Review clock-in and clock-out records",
-    tab:    "va_reports",
-    accent: colors.communityMain,
-    bg:     colors.infoLight,
-  },
+  { icon: ClipboardList, title: "EOD Reports",  sub: "Check who submitted their end-of-day report", tab: "va_reports",   accent: colors.teal,          bg: colors.tealLight  },
+  { icon: Clock,         title: "Attendance",   sub: "Review clock-in and clock-out records",        tab: "va_reports",   accent: colors.communityMain, bg: colors.infoLight  },
+  { icon: UserSearch,    title: "VA Inspector", sub: "View all reports for a specific VA",            tab: "va_inspector", accent: colors.communitySM,   bg: "#F5F3FF"         },
+  { icon: CalendarDays,  title: "Schedule",     sub: "See the team's weekly shift overview",          tab: "schedule",     accent: colors.success,       bg: colors.successLight},
 ];
 
 const COMING_SOON = [
-  { icon: BarChart3,    label: "EOM Reports",      sub: "Monthly summaries per VA"      },
-  { icon: ShieldAlert,  label: "Strike Tracker",    sub: "Monitor VA strike status"      },
-  { icon: CalendarDays, label: "Schedule Overview", sub: "Shifts and working schedules"  },
+  { icon: BarChart3,   label: "EOM Reports",   sub: "Monthly summaries per VA"  },
+  { icon: ShieldAlert, label: "Strike Tracker", sub: "Monitor VA strike status"  },
 ];
 
 export default function Dashboard({ setActiveTab }) {

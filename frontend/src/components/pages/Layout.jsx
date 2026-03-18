@@ -1,32 +1,30 @@
 import { useState } from "react";
 import {
-  LayoutDashboard,
-  ClipboardList,
-  UserSearch,
-  BarChart3,
-  ShieldAlert,
-  CalendarDays,
-  ChevronRight,
+  LayoutDashboard, ClipboardList, UserSearch,
+  CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut,
 } from "lucide-react";
+import { signOut } from "firebase/auth";
+import { auth } from "../../firebase";
 import { colors, font, radius } from "../../styles/tokens";
 import Dashboard   from "../admin/Dashboard";
 import VAReports   from "../admin/VaReports";
-import VAInspector from "../admin/VaInspector";
+import VAInspector from "../admin/VAInspector";
+import Schedule    from "../admin/Schedule";
 import { SoonBadge } from "../ui/Badge";
 
 const NAV = [
-  { id: "dashboard",   icon: LayoutDashboard, label: "Dashboard",    sub: "Overview",         component: Dashboard   },
-  { id: "va_reports",  icon: ClipboardList,   label: "VA Reports",   sub: "EOD & Attendance", component: VAReports   },
-  { id: "va_inspector",icon: UserSearch,      label: "VA Inspector", sub: "Per-VA history",   component: VAInspector },
+  { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",    sub: "Overview",         component: Dashboard   },
+  { id: "va_reports",   icon: ClipboardList,   label: "VA Reports",   sub: "EOD & Attendance", component: VAReports   },
+  { id: "va_inspector", icon: UserSearch,      label: "VA Inspector", sub: "Per-VA history",   component: VAInspector },
+  { id: "schedule",     icon: CalendarDays,    label: "Schedule",     sub: "Shift overview",   component: Schedule    },
 ];
 
 const NAV_SOON = [
-  { icon: BarChart3,    label: "EOM Reports"    },
-  { icon: ShieldAlert,  label: "Strike Tracker" },
-  { icon: CalendarDays, label: "Schedule"        },
+  { icon: BarChart3,   label: "EOM Reports"   },
+  { icon: ShieldAlert, label: "Strike Tracker" },
 ];
 
-export default function Layout() {
+export default function Layout({ user }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const ActivePage = NAV.find((n) => n.id === activeTab)?.component ?? Dashboard;
 
@@ -126,10 +124,49 @@ export default function Layout() {
           })}
         </div>
 
-        {/* Sidebar footer */}
-        <div style={{ padding: "16px 20px", borderTop: `1px solid ${colors.navyBorder}` }}>
-          <div style={{ fontSize: font.xs, color: "#253D5C", fontWeight: 600 }}>MT Admin — v0.1</div>
-          <div style={{ fontSize: font.xs, color: "#1A2E47", marginTop: 2 }}>Dev Mode</div>
+        {/* Sidebar footer — user info + sign out */}
+        <div style={{ borderTop: `1px solid ${colors.navyBorder}`, paddingTop: 14 }}>
+          <div style={{
+            fontSize: font.xs, color: colors.navyText,
+            fontWeight: 600, marginBottom: 10,
+            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+            padding: "0 4px",
+          }}>
+            {user?.email}
+          </div>
+          <button
+            onClick={() => signOut(auth)}
+            style={{
+              display:     "flex",
+              alignItems:  "center",
+              gap:         8,
+              width:       "100%",
+              padding:     "8px 12px",
+              background:  "transparent",
+              border:      `1px solid ${colors.navyBorder}`,
+              borderRadius: radius.md,
+              color:       colors.navyMuted,
+              fontSize:    font.sm,
+              fontWeight:  600,
+              cursor:      "pointer",
+              fontFamily:  font.family,
+              transition:  "background .12s, color .12s",
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.background = colors.navyLight;
+              e.currentTarget.style.color = "#fff";
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = "transparent";
+              e.currentTarget.style.color = colors.navyMuted;
+            }}
+          >
+            <LogOut size={14} />
+            Sign Out
+          </button>
+          <div style={{ fontSize: font.xs, color: "#1A2E47", marginTop: 10, padding: "0 4px" }}>
+            MT Admin — v0.1
+          </div>
         </div>
       </aside>
 
