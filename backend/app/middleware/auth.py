@@ -1,21 +1,16 @@
 import os
 import firebase_admin
 from firebase_admin import credentials, auth as firebase_auth
-from fastapi import Request, HTTPException
+from fastapi import Depends, Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 # ── Initialize Firebase Admin SDK once ───────────────────────────
-# Reads the service account from a JSON file.
-# Set FIREBASE_SERVICE_ACCOUNT_PATH in .env (defaults to service_account.json).
-# The file path is resolved relative to the backend/ root folder.
-
 if not firebase_admin._apps:
     sa_path = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH", "serviceAccountKey.json")
 
-    # Always resolve relative to backend/ regardless of where uvicorn is run from
-    base_dir = os.path.dirname(                          # backend/
-        os.path.dirname(                                 # backend/app/
-            os.path.dirname(os.path.abspath(__file__))  # backend/app/middleware/
+    base_dir = os.path.dirname(
+        os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__))
         )
     )
     full_path = os.path.join(base_dir, sa_path)
@@ -39,13 +34,12 @@ security = HTTPBearer(auto_error=False)
 
 async def verify_token(
     request: Request,
-    credentials: HTTPAuthorizationCredentials = None,
+    credentials: HTTPAuthorizationCredentials = Depends(security),  # ← wired correctly
 ) -> dict:
     """
     FastAPI dependency — verifies the Firebase ID token sent in the
     Authorization: Bearer <token> header on every protected request.
     """
-    # Health check bypasses auth
     if request.url.path == "/health":
         return {}
 

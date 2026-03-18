@@ -1,19 +1,12 @@
-import { useState } from "react";
-import {
-  Search, Copy, Check, Clock, ClipboardList,
-  Users, FileCheck, UserX, CheckCircle2, Timer, Mail,
-} from "lucide-react";
-import { colors, font } from "../../styles/tokens";
-import { apiFetch }         from "../../api";
-import Button               from "../ui/Button";
-import StatCard             from "../ui/StatCard";
-import DataTable            from "../ui/DataTable";
-import StatusBox            from "../ui/StatusBox";
-import Card, { SectionLabel } from "../ui/Card";
-import { CommunityBadge, StatusBadge } from "../ui/Badge";
-import PageHeader           from "../ui/PageHeader";
-import TabBar               from "../ui/TabBar";
-import DateInput            from "../ui/DateInput";
+import { useState }              from "react";
+import { Search, Copy, Check, Clock, ClipboardList, Users, FileCheck, UserX, CheckCircle2, Timer, Mail } from "lucide-react";
+import { colors, font }          from "../../styles/tokens";
+import { apiFetch }              from "../../api";
+import Button                           from "../ui/Button";
+import { Card, SectionLabel, ControlBar, PageHeader, TabBar, StatRow } from "../ui/Structure";
+import { DataTable }                    from "../ui/Tables";
+import { DateInput }                    from "../ui/Inputs";
+import { StatCard, StatusBox, CommunityBadge, StatusBadge } from "../ui/Indicators";
 
 const yesterday = () => {
   const d = new Date();
@@ -31,10 +24,9 @@ const TABS = [
   { id: "attendance", Icon: Clock,         label: "Attendance"  },
 ];
 
-// ── Root ─────────────────────────────────────────────────────────
+// ── Root ──────────────────────────────────────────────────────────
 export default function VAReports() {
   const [activeTab, setActiveTab] = useState("eod");
-
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
       <PageHeader
@@ -99,24 +91,24 @@ function EODChecker() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Controls */}
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <DateInput value={date} onChange={setDate} />
-        <Button icon={Search} onClick={runCheck} disabled={loading}>
+
+      <ControlBar>
+        <DateInput value={date} onChange={setDate} label="Date" />
+        <Button icon={Search} onClick={runCheck} disabled={loading} style={{ alignSelf: "flex-end", height: 38 }}>
           {loading ? "Loading…" : "Run Check"}
         </Button>
         {data && (
-          <Button variant="secondary" icon={emailOk ? Check : Mail} onClick={sendEmail} disabled={emailing}>
+          <Button variant="secondary" icon={emailOk ? Check : Mail} onClick={sendEmail} disabled={emailing} style={{ alignSelf: "flex-end", height: 38 }}>
             {emailing ? "Sending…" : emailOk ? "Sent!" : "Email Report"}
           </Button>
         )}
-      </div>
+      </ControlBar>
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
       {data && (
         <>
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <StatRow>
             <StatCard icon={Users}     label="Active VAs"    value={data.active_va_count}  />
             <StatCard icon={Clock}     label="Clocked In"    value={data.clocked_in_count} />
             <StatCard icon={FileCheck} label="EOD Submitted" value={data.submitted_count}  />
@@ -132,7 +124,7 @@ function EODChecker() {
               value={data.late_count}
               highlight={data.late_count > 0 ? "warning" : "success"}
             />
-          </div>
+          </StatRow>
 
           {data.missing.length > 0 ? (
             <Card
@@ -146,10 +138,12 @@ function EODChecker() {
             >
               {data.missing.map((va, i) => (
                 <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "11px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.dangerBorder}` : "none",
-                  background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
+                  display:     "flex",
+                  alignItems:  "center",
+                  gap:         12,
+                  padding:     "11px 20px",
+                  borderTop:   i > 0 ? `1px solid ${colors.dangerBorder}` : "none",
+                  background:  i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
                 }}>
                   <CommunityBadge community={va.community} />
                   <div style={{ flex: 1 }}>
@@ -176,10 +170,12 @@ function EODChecker() {
             <Card title={`Late Submissions (${data.late_submissions.length})`} noPadding>
               {data.late_submissions.map((r, i) => (
                 <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "11px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.warningBorder}` : "none",
-                  background: i % 2 === 0 ? colors.warningLight : "#FFFDF0",
+                  display:     "flex",
+                  alignItems:  "center",
+                  gap:         12,
+                  padding:     "11px 20px",
+                  borderTop:   i > 0 ? `1px solid ${colors.warningBorder}` : "none",
+                  background:  i % 2 === 0 ? colors.warningLight : "#FFFDF0",
                 }}>
                   <CommunityBadge community={r.community} />
                   <span style={{ fontWeight: 600, flex: 1, fontSize: font.base }}>{r.name}</span>
@@ -237,18 +233,19 @@ function AttendanceChecker() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <DateInput value={date} onChange={setDate} />
-        <Button icon={Search} onClick={runCheck} disabled={loading}>
+
+      <ControlBar>
+        <DateInput value={date} onChange={setDate} label="Date" />
+        <Button icon={Search} onClick={runCheck} disabled={loading} style={{ alignSelf: "flex-end", height: 38 }}>
           {loading ? "Loading…" : "Run Check"}
         </Button>
-      </div>
+      </ControlBar>
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
       {data && (
         <>
-          <div style={{ display: "flex", gap: 14, flexWrap: "wrap" }}>
+          <StatRow>
             <StatCard icon={Users}        label="Active VAs"  value={data.vas.length}        />
             <StatCard icon={Clock}        label="Clocked In"  value={data.clock_ins.length}  />
             <StatCard icon={CheckCircle2} label="Clocked Out" value={data.clock_outs.length} />
@@ -264,18 +261,23 @@ function AttendanceChecker() {
               value={data.late_count}
               highlight={data.late_count > 0 ? "warning" : "success"}
             />
-          </div>
+          </StatRow>
 
           {data.no_record.length > 0 ? (
             <Card title={`${data.no_record.length} VA${data.no_record.length !== 1 ? "s" : ""} with No Clock-In`} noPadding>
               {data.no_record.map((va, i) => (
                 <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12, padding: "11px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.dangerBorder}` : "none",
+                  display:    "flex",
+                  alignItems: "center",
+                  gap:        12,
+                  padding:    "11px 20px",
+                  borderTop:  i > 0 ? `1px solid ${colors.dangerBorder}` : "none",
                   background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
                 }}>
                   <CommunityBadge community={va.community} />
-                  <span style={{ fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{va.name}</span>
+                  <span style={{ fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    {va.name}
+                  </span>
                 </div>
               ))}
             </Card>
@@ -287,41 +289,19 @@ function AttendanceChecker() {
             <Card title={`Late Clock-Ins (${data.late_clock_ins.length})`} noPadding>
               {data.late_clock_ins.map((c, i) => (
                 <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12, padding: "11px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.warningBorder}` : "none",
+                  display:    "flex",
+                  alignItems: "center",
+                  gap:        12,
+                  padding:    "11px 20px",
+                  borderTop:  i > 0 ? `1px solid ${colors.warningBorder}` : "none",
                   background: i % 2 === 0 ? colors.warningLight : "#FFFDF0",
                 }}>
-                  <span style={{ fontWeight: 600, flex: 1, fontSize: font.base }}>{c.raw_name}</span>
-                  <StatusBadge variant="warning">
-                    {c.punctuality.clocked_in_est} — {c.punctuality.minutes_late}m late
-                  </StatusBadge>
+                  <CommunityBadge community={c.community} />
+                  <span style={{ fontWeight: 600, flex: 1, fontSize: font.base }}>{c.name}</span>
+                  <StatusBadge variant="warning">{c.time_in} — late</StatusBadge>
                 </div>
               ))}
             </Card>
-          )}
-
-          {data.clock_ins.length > 0 && (
-            <div>
-              <SectionLabel>Clock-In Records ({data.clock_ins.length})</SectionLabel>
-              <DataTable
-                columns={[
-                  { label: "Name",        flex: 2 },
-                  { label: "Time (EST)",  flex: 1 },
-                  { label: "Punctuality", flex: 1 },
-                  { label: "Notes",       flex: 2 },
-                ]}
-                rows={data.clock_ins.map((c) => [
-                  <span style={{ fontWeight: 600, color: colors.textPrimary }}>{c.raw_name}</span>,
-                  <span style={{ color: colors.textMuted }}>{c.punctuality?.clocked_in_est ?? "—"}</span>,
-                  c.punctuality?.on_time
-                    ? <StatusBadge variant="success">On Time</StatusBadge>
-                    : <StatusBadge variant="warning">{c.punctuality?.minutes_late}m Late</StatusBadge>,
-                  <span style={{ color: c.notes ? colors.textBody : colors.textFaint, fontStyle: c.notes ? "normal" : "italic" }}>
-                    {c.notes || "No notes"}
-                  </span>,
-                ])}
-              />
-            </div>
           )}
         </>
       )}

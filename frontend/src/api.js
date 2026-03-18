@@ -3,11 +3,14 @@ import { auth } from "./firebase";
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 /**
- * Gets the current Firebase ID token.
- * auth.currentUser is always available here because App.jsx
- * only renders components after useAuth() confirms the user is logged in.
+ * Waits for Firebase to finish restoring auth state, then returns
+ * the current user's ID token. Returns null if not logged in.
+ *
+ * Without authStateReady(), auth.currentUser is null during the brief
+ * async window on page load — causing "Authorization header missing" errors.
  */
 async function getToken() {
+  await auth.authStateReady(); // ← wait for Firebase session to restore
   if (!auth.currentUser) return null;
   return auth.currentUser.getIdToken();
 }

@@ -4,13 +4,13 @@ import {
   CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
-import { auth } from "../../firebase";
+import { auth }   from "../../firebase";
 import { colors, font, radius } from "../../styles/tokens";
 import Dashboard   from "../admin/Dashboard";
 import VAReports   from "../admin/VaReports";
-import VAInspector from "../admin/VAInspector";
+import VAInspector from "../admin/VaInspector";
 import Schedule    from "../admin/Schedule";
-import { SoonBadge } from "../ui/Badge";
+import { SoonBadge } from "../ui/Indicators";
 
 const NAV = [
   { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",    sub: "Overview",         component: Dashboard   },
@@ -20,7 +20,7 @@ const NAV = [
 ];
 
 const NAV_SOON = [
-  { icon: BarChart3,   label: "EOM Reports"   },
+  { icon: BarChart3,   label: "EOM Reports"    },
   { icon: ShieldAlert, label: "Strike Tracker" },
 ];
 
@@ -31,68 +31,66 @@ export default function Layout({ user }) {
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: font.family, background: colors.bg }}>
 
-      {/* ── Sidebar ─────────────────────────────────────────────── */}
+      {/* ── Sidebar ──────────────────────────────────────────────── */}
       <aside style={{
-        width:          240,
-        minWidth:       240,
-        background:     colors.navy,
-        display:        "flex",
-        flexDirection:  "column",
-        height:         "100vh",
-        borderRight:    `1px solid ${colors.navyBorder}`,
-        overflowY:      "auto",
+        width:         220,
+        minWidth:      220,
+        background:    colors.navy,
+        display:       "flex",
+        flexDirection: "column",
+        height:        "100vh",
+        borderRight:   `1px solid ${colors.navyBorder}`,
+        overflowY:     "auto",
       }}>
         {/* Logo */}
-        <div style={{
-          padding:        "24px 20px 20px",
-          borderBottom:   `1px solid ${colors.navyBorder}`,
-        }}>
+        <div style={{ padding: "20px 20px 16px", borderBottom: `1px solid ${colors.navyBorder}` }}>
           <img
             src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png"
             alt="Monster Task"
-            style={{ width: 140, objectFit: "contain" }}
+            style={{ width: 96, objectFit: "contain" }}
           />
         </div>
 
         {/* Primary nav */}
-        <div style={{ flex: 1, padding: "16px 10px 0" }}>
+        <div style={{ flex: 1, padding: "12px 8px 0" }}>
           <NavGroupLabel>Menu</NavGroupLabel>
 
           {NAV.map((item) => {
             const active = activeTab === item.id;
-            const Icon = item.icon;
+            const Icon   = item.icon;
             return (
               <button
                 key={item.id}
                 onClick={() => setActiveTab(item.id)}
                 style={{
-                  display:       "flex",
-                  alignItems:    "center",
-                  gap:           10,
-                  width:         "100%",
-                  padding:       "9px 12px",
-                  borderRadius:  radius.md,
-                  border:        "none",
-                  background:    active ? colors.navyLight : "transparent",
-                  cursor:        "pointer",
-                  fontFamily:    font.family,
-                  marginBottom:  2,
-                  transition:    "background .12s",
-                  borderLeft:    active ? `3px solid ${colors.teal}` : "3px solid transparent",
+                  display:      "flex",
+                  alignItems:   "center",
+                  gap:          10,
+                  width:        "100%",
+                  padding:      "9px 12px",
+                  borderRadius: radius.md,
+                  border:       "none",
+                  background:   active ? colors.navyLight : "transparent",
+                  cursor:       "pointer",
+                  fontFamily:   font.family,
+                  marginBottom: 2,
+                  transition:   "background .12s",
+                  borderLeft:   active ? `3px solid ${colors.teal}` : "3px solid transparent",
                 }}
                 onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = colors.navyLight; }}
                 onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent"; }}
               >
-                <Icon
-                  size={16}
-                  strokeWidth={active ? 2.5 : 2}
-                  color={active ? colors.teal : colors.navyMuted}
-                />
+                <Icon size={16} strokeWidth={active ? 2.5 : 2} color={active ? colors.teal : "#7A9BB8"} />
                 <div style={{ flex: 1, textAlign: "left" }}>
-                  <div style={{ fontSize: font.base, fontWeight: active ? 700 : 500, color: active ? colors.white : colors.navyText, lineHeight: 1.2 }}>
+                  <div style={{
+                    fontSize:   font.base,
+                    fontWeight: active ? 700 : 500,
+                    color:      active ? colors.white : "#C4D8EA",
+                    lineHeight: 1.2,
+                  }}>
                     {item.label}
                   </div>
-                  <div style={{ fontSize: font.xs, color: active ? colors.navyMuted : "#2E4A6A", marginTop: 1 }}>
+                  <div style={{ fontSize: font.xs, color: active ? "#7A9BB8" : "#506A84", marginTop: 1 }}>
                     {item.sub}
                   </div>
                 </div>
@@ -101,8 +99,8 @@ export default function Layout({ user }) {
             );
           })}
 
-          {/* Coming soon section */}
-          <NavGroupLabel style={{ marginTop: 20 }}>Coming Soon</NavGroupLabel>
+          {/* Coming soon */}
+          <NavGroupLabel style={{ marginTop: 16 }}>Coming Soon</NavGroupLabel>
           {NAV_SOON.map((item) => {
             const Icon = item.icon;
             return (
@@ -116,83 +114,78 @@ export default function Layout({ user }) {
                 marginBottom: 2,
                 borderLeft:   "3px solid transparent",
               }}>
-                <Icon size={16} color="#1E3255" />
-                <span style={{ fontSize: font.base, color: "#1E3255", fontWeight: 500 }}>{item.label}</span>
+                <Icon size={16} color="#2C4460" />
+                <span style={{ fontSize: font.base, color: "#2C4460", fontWeight: 500 }}>{item.label}</span>
                 <SoonBadge />
               </div>
             );
           })}
         </div>
 
-        {/* Sidebar footer — user info + sign out */}
-        <div style={{ borderTop: `1px solid ${colors.navyBorder}`, paddingTop: 14 }}>
+        {/* Sidebar footer */}
+        <div style={{ borderTop: `1px solid ${colors.navyBorder}`, padding: "14px 12px 16px" }}>
           <div style={{
-            fontSize: font.xs, color: colors.navyText,
-            fontWeight: 600, marginBottom: 10,
-            overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-            padding: "0 4px",
+            fontSize:     font.xs,
+            color:        "#7A9BB8",
+            fontWeight:   600,
+            marginBottom: 10,
+            overflow:     "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace:   "nowrap",
           }}>
             {user?.email}
           </div>
           <button
             onClick={() => signOut(auth)}
             style={{
-              display:     "flex",
-              alignItems:  "center",
-              gap:         8,
-              width:       "100%",
-              padding:     "8px 12px",
-              background:  "transparent",
-              border:      `1px solid ${colors.navyBorder}`,
+              display:      "flex",
+              alignItems:   "center",
+              gap:          8,
+              width:        "100%",
+              padding:      "8px 12px",
+              background:   "transparent",
+              border:       `1px solid ${colors.navyBorder}`,
               borderRadius: radius.md,
-              color:       colors.navyMuted,
-              fontSize:    font.sm,
-              fontWeight:  600,
-              cursor:      "pointer",
-              fontFamily:  font.family,
-              transition:  "background .12s, color .12s",
+              color:        "#7A9BB8",
+              fontSize:     font.sm,
+              fontWeight:   600,
+              cursor:       "pointer",
+              fontFamily:   font.family,
+              transition:   "background .12s, color .12s",
             }}
-            onMouseEnter={(e) => {
-              e.currentTarget.style.background = colors.navyLight;
-              e.currentTarget.style.color = "#fff";
-            }}
-            onMouseLeave={(e) => {
-              e.currentTarget.style.background = "transparent";
-              e.currentTarget.style.color = colors.navyMuted;
-            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = colors.navyLight; e.currentTarget.style.color = "#fff"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#7A9BB8"; }}
           >
             <LogOut size={14} />
             Sign Out
           </button>
-          <div style={{ fontSize: font.xs, color: "#1A2E47", marginTop: 10, padding: "0 4px" }}>
+          <div style={{ fontSize: font.xs, color: "#3A5472", marginTop: 10 }}>
             MT Admin — v0.1
           </div>
         </div>
       </aside>
 
-      {/* ── Main area ──────────────────────────────────────────── */}
+      {/* ── Main area ────────────────────────────────────────────── */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", minWidth: 0, overflow: "hidden" }}>
 
         {/* Top bar */}
         <header style={{
-          background:    colors.surface,
-          borderBottom:  `1px solid ${colors.border}`,
-          padding:       "0 32px",
-          height:        56,
-          display:       "flex",
-          alignItems:    "center",
-          justifyContent:"flex-end",
-          flexShrink:    0,
+          background:     colors.surface,
+          borderBottom:   `1px solid ${colors.border}`,
+          padding:        "0 32px",
+          height:         52,
+          display:        "flex",
+          alignItems:     "center",
+          justifyContent: "flex-end",
+          flexShrink:     0,
         }}>
           <span style={{ fontSize: font.sm, color: colors.textMuted, fontWeight: 500 }}>
-            {new Date().toLocaleDateString("en-US", {
-              weekday: "long", month: "long", day: "numeric", year: "numeric",
-            })}
+            {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
           </span>
         </header>
 
-        {/* Scrollable page content — full width */}
-        <main style={{ flex: 1, overflowY: "auto", padding: "36px 40px", width: "100%", boxSizing: "border-box" }}>
+        {/* Page content */}
+        <main style={{ flex: 1, overflowY: "auto", padding: "32px 40px", width: "100%", boxSizing: "border-box" }}>
           <ActivePage setActiveTab={setActiveTab} />
         </main>
       </div>
@@ -205,7 +198,7 @@ function NavGroupLabel({ children, style: extra }) {
     <div style={{
       fontSize:      font.xs,
       fontWeight:    700,
-      color:         "#1E3255",
+      color:         "#3A5472",
       letterSpacing: "0.08em",
       textTransform: "uppercase",
       padding:       "8px 12px 6px",

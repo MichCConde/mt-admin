@@ -6,7 +6,7 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from app.routers import attendance, eod, inspector, schedule, email as email_router
-from app.middleware.auth import verify_token, security
+from app.middleware.auth import verify_token  # security no longer needed here
 
 # ── Scheduler ─────────────────────────────────────────────────────
 scheduler = BackgroundScheduler()
@@ -38,7 +38,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="MT Admin API",
     lifespan=lifespan,
-    redirect_slashes=False,   # ← prevents 307 redirect that strips auth headers
+    redirect_slashes=False,
 )
 
 app.add_middleware(
@@ -52,8 +52,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# All routes protected — require valid Firebase token
-PROTECTED = {"dependencies": [Depends(security), Depends(verify_token)]}
+# verify_token already pulls in security via Depends() internally
+PROTECTED = {"dependencies": [Depends(verify_token)]}
 
 app.include_router(attendance.router, prefix="/api/attendance", tags=["Attendance"], **PROTECTED)
 app.include_router(eod.router,        prefix="/api/eod",        tags=["EOD"],        **PROTECTED)

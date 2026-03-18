@@ -1,18 +1,18 @@
 import { ClipboardList, Clock, BarChart3, ShieldAlert, CalendarDays, ArrowRight, UserSearch } from "lucide-react";
 import { colors, font, radius, shadow } from "../../styles/tokens";
-import { SectionLabel } from "../ui/Card";
-import { SoonBadge } from "../ui/Badge";
+import { SectionLabel }  from "../ui/Structure";
+import { SoonBadge }     from "../ui/Indicators";
 
 const QUICK_ACTIONS = [
-  { icon: ClipboardList, title: "EOD Reports",  sub: "Check who submitted their end-of-day report", tab: "va_reports",   accent: colors.teal,          bg: colors.tealLight  },
-  { icon: Clock,         title: "Attendance",   sub: "Review clock-in and clock-out records",        tab: "va_reports",   accent: colors.communityMain, bg: colors.infoLight  },
-  { icon: UserSearch,    title: "VA Inspector", sub: "View all reports for a specific VA",            tab: "va_inspector", accent: colors.communitySM,   bg: "#F5F3FF"         },
+  { icon: ClipboardList, title: "EOD Reports",  sub: "Check who submitted their end-of-day report", tab: "va_reports",   accent: colors.teal,          bg: colors.tealLight   },
+  { icon: Clock,         title: "Attendance",   sub: "Review clock-in and clock-out records",        tab: "va_reports",   accent: colors.communityMain, bg: colors.infoLight   },
+  { icon: UserSearch,    title: "VA Inspector", sub: "View all reports for a specific VA",            tab: "va_inspector", accent: colors.communitySM,   bg: "#F5F3FF"          },
   { icon: CalendarDays,  title: "Schedule",     sub: "See the team's weekly shift overview",          tab: "schedule",     accent: colors.success,       bg: colors.successLight},
 ];
 
 const COMING_SOON = [
-  { icon: BarChart3,   label: "EOM Reports",   sub: "Monthly summaries per VA"  },
-  { icon: ShieldAlert, label: "Strike Tracker", sub: "Monitor VA strike status"  },
+  { icon: BarChart3,   label: "EOM Reports",    sub: "Monthly summaries per VA"   },
+  { icon: ShieldAlert, label: "Strike Tracker", sub: "Monitor VA strike status"   },
 ];
 
 export default function Dashboard({ setActiveTab }) {
@@ -29,7 +29,7 @@ export default function Dashboard({ setActiveTab }) {
         <h1 style={{ fontSize: font.h1, fontWeight: 800, color: colors.textPrimary, margin: 0 }}>
           {greeting}
         </h1>
-        <p style={{ fontSize: font.base, color: colors.textMuted, marginTop: 6, margin: "6px 0 0" }}>
+        <p style={{ fontSize: font.base, color: colors.textBody, marginTop: 6, margin: "6px 0 0" }}>
           Here's what needs your attention today.
         </p>
       </div>
@@ -37,10 +37,10 @@ export default function Dashboard({ setActiveTab }) {
       {/* Quick Actions */}
       <SectionLabel>Quick Actions</SectionLabel>
       <div style={{
-        display:               "grid",
-        gridTemplateColumns:   "repeat(auto-fill, minmax(320px, 1fr))",
-        gap:                   16,
-        marginBottom:          48,
+        display:             "grid",
+        gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
+        gap:                 16,
+        marginBottom:        48,
       }}>
         {QUICK_ACTIONS.map((a, i) => {
           const Icon = a.icon;
@@ -54,7 +54,7 @@ export default function Dashboard({ setActiveTab }) {
                 gap:          18,
                 padding:      "22px 24px",
                 background:   colors.surface,
-                border:       `1.5px solid ${colors.border}`,
+                border:       `1px solid ${colors.border}`,
                 borderRadius: radius.lg,
                 cursor:       "pointer",
                 textAlign:    "left",
@@ -85,16 +85,14 @@ export default function Dashboard({ setActiveTab }) {
               }}>
                 <Icon size={22} color={a.accent} strokeWidth={2} />
               </div>
-
               <div style={{ flex: 1 }}>
                 <div style={{ fontSize: font.lg, fontWeight: 700, color: colors.textPrimary }}>
                   {a.title}
                 </div>
-                <div style={{ fontSize: font.sm, color: colors.textMuted, marginTop: 4, lineHeight: 1.4 }}>
+                <div style={{ fontSize: font.sm, color: colors.textBody, marginTop: 4, lineHeight: 1.4 }}>
                   {a.sub}
                 </div>
               </div>
-
               <ArrowRight size={16} color={colors.textFaint} style={{ flexShrink: 0 }} />
             </button>
           );

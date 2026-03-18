@@ -4,7 +4,7 @@ import Login         from "./components/pages/Login";
 import { colors, font } from "./styles/tokens";
 
 export default function App() {
-  const { user, staff, loading, denied } = useAuth();
+  const { user, staff, loading, denied, authError  } = useAuth();
 
   // ── 1. Still checking auth + Firestore ──────────────────────────
   if (loading) {
@@ -51,6 +51,9 @@ export default function App() {
           <div style={{ fontSize: font.base, color: colors.textBody, lineHeight: 1.6 }}>
             Your account is not registered as MT Staff.
             Please contact your administrator.
+          </div>
+          <div>
+            {authError || "Your account is not registered as MT Staff. Please contact your administrator."}
           </div>
         </div>
       </div>
