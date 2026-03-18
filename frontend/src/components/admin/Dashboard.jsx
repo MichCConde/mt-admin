@@ -1,143 +1,202 @@
-import { ClipboardList, Clock, BarChart3, ShieldAlert, CalendarDays, ArrowRight, UserSearch } from "lucide-react";
+import { useEffect, useState }  from "react";
+import { Users, AlertTriangle, Flag, UserCheck, UserX } from "lucide-react";
 import { colors, font, radius, shadow } from "../../styles/tokens";
-import { SectionLabel }  from "../ui/Structure";
-import { SoonBadge }     from "../ui/Indicators";
+import { apiFetch }              from "../../api";
+import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
+import { Card, SectionLabel, PageHeader, StatRow } from "../ui/Structure";
 
-const QUICK_ACTIONS = [
-  { icon: ClipboardList, title: "EOD Reports",  sub: "Check who submitted their end-of-day report", tab: "va_reports",   accent: colors.teal,          bg: colors.tealLight   },
-  { icon: Clock,         title: "Attendance",   sub: "Review clock-in and clock-out records",        tab: "va_reports",   accent: colors.communityMain, bg: colors.infoLight   },
-  { icon: UserSearch,    title: "VA Inspector", sub: "View all reports for a specific VA",            tab: "va_inspector", accent: colors.communitySM,   bg: "#F5F3FF"          },
-  { icon: CalendarDays,  title: "Schedule",     sub: "See the team's weekly shift overview",          tab: "schedule",     accent: colors.success,       bg: colors.successLight},
-];
-
-const COMING_SOON = [
-  { icon: BarChart3,   label: "EOM Reports",    sub: "Monthly summaries per VA"   },
-  { icon: ShieldAlert, label: "Strike Tracker", sub: "Monitor VA strike status"   },
-];
-
-export default function Dashboard({ setActiveTab }) {
-  const hour = new Date().getHours();
-  const greeting =
-    hour < 12 ? "Good morning" :
-    hour < 17 ? "Good afternoon" :
-                "Good evening";
-
+// ── Bar chart used in CBA distribution ───────────────────────────
+function BarChart({ items, max }) {
   return (
-    <div style={{ width: "100%" }}>
-      {/* Greeting */}
-      <div style={{ marginBottom: 40 }}>
-        <h1 style={{ fontSize: font.h1, fontWeight: 800, color: colors.textPrimary, margin: 0 }}>
-          {greeting}
-        </h1>
-        <p style={{ fontSize: font.base, color: colors.textBody, marginTop: 6, margin: "6px 0 0" }}>
-          Here's what needs your attention today.
-        </p>
-      </div>
-
-      {/* Quick Actions */}
-      <SectionLabel>Quick Actions</SectionLabel>
-      <div style={{
-        display:             "grid",
-        gridTemplateColumns: "repeat(auto-fill, minmax(320px, 1fr))",
-        gap:                 16,
-        marginBottom:        48,
-      }}>
-        {QUICK_ACTIONS.map((a, i) => {
-          const Icon = a.icon;
-          return (
-            <button
-              key={i}
-              onClick={() => setActiveTab(a.tab)}
-              style={{
-                display:      "flex",
-                alignItems:   "center",
-                gap:          18,
-                padding:      "22px 24px",
-                background:   colors.surface,
-                border:       `1px solid ${colors.border}`,
-                borderRadius: radius.lg,
-                cursor:       "pointer",
-                textAlign:    "left",
-                fontFamily:   font.family,
-                boxShadow:    shadow.card,
-                transition:   "border-color .15s, box-shadow .15s, transform .15s",
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.borderColor = a.accent;
-                e.currentTarget.style.boxShadow   = shadow.md;
-                e.currentTarget.style.transform   = "translateY(-2px)";
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.borderColor = colors.border;
-                e.currentTarget.style.boxShadow   = shadow.card;
-                e.currentTarget.style.transform   = "none";
-              }}
-            >
-              <div style={{
-                width:          48,
-                height:         48,
-                borderRadius:   radius.md,
-                background:     a.bg,
-                display:        "flex",
-                alignItems:     "center",
-                justifyContent: "center",
-                flexShrink:     0,
-              }}>
-                <Icon size={22} color={a.accent} strokeWidth={2} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: font.lg, fontWeight: 700, color: colors.textPrimary }}>
-                  {a.title}
-                </div>
-                <div style={{ fontSize: font.sm, color: colors.textBody, marginTop: 4, lineHeight: 1.4 }}>
-                  {a.sub}
-                </div>
-              </div>
-              <ArrowRight size={16} color={colors.textFaint} style={{ flexShrink: 0 }} />
-            </button>
-          );
-        })}
-      </div>
-
-      {/* Coming Soon */}
-      <SectionLabel>Coming Soon</SectionLabel>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {COMING_SOON.map((item, i) => {
-          const Icon = item.icon;
-          return (
-            <div key={i} style={{
-              display:      "flex",
-              alignItems:   "center",
-              gap:          16,
-              padding:      "14px 20px",
-              background:   colors.surface,
-              border:       `1px dashed ${colors.border}`,
-              borderRadius: radius.md,
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      {items.map((item, i) => {
+        const pct = max > 0 ? (item.count / max) * 100 : 0;
+        const BAR_COLORS = [colors.teal, colors.communityMain, colors.communitySM, colors.communityCBA];
+        return (
+          <div key={i}>
+            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.textBody }}>
+                {item.label}
+              </span>
+              <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>
+                {item.count}
+              </span>
+            </div>
+            <div style={{
+              width: "100%", height: 8,
+              background: colors.bg,
+              borderRadius: 99,
+              overflow: "hidden",
             }}>
               <div style={{
-                width:          36,
-                height:         36,
-                borderRadius:   radius.sm,
-                background:     colors.bg,
-                display:        "flex",
-                alignItems:     "center",
-                justifyContent: "center",
-                flexShrink:     0,
-              }}>
-                <Icon size={16} color={colors.textMuted} strokeWidth={2} />
-              </div>
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: font.base, fontWeight: 600, color: colors.textMuted }}>
-                  {item.label}
-                </div>
-                <div style={{ fontSize: font.sm, color: colors.textFaint, marginTop: 2 }}>
-                  {item.sub}
-                </div>
-              </div>
-              <SoonBadge />
+                width:        `${pct}%`,
+                height:       "100%",
+                background:   BAR_COLORS[i % BAR_COLORS.length],
+                borderRadius: 99,
+                transition:   "width .5s ease",
+              }} />
             </div>
-          );
-        })}
+            {item.vas?.length > 0 && (
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
+                {item.vas.map((name, j) => (
+                  <span key={j} style={{
+                    fontSize:     font.xs,
+                    color:        colors.textMuted,
+                    background:   colors.surfaceAlt,
+                    border:       `1px solid ${colors.border}`,
+                    borderRadius: radius.sm,
+                    padding:      "2px 8px",
+                  }}>
+                    {name}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ── VA row in missing / flagged lists ─────────────────────────────
+function VARow({ va, badge, i }) {
+  return (
+    <div style={{
+      display:    "flex",
+      alignItems: "center",
+      gap:        12,
+      padding:    "10px 20px",
+      borderTop:  i > 0 ? `1px solid ${colors.border}` : "none",
+      background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
+    }}>
+      <CommunityBadge community={va.community} />
+      <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+        {va.name}
+      </span>
+      {badge}
+    </div>
+  );
+}
+
+// ── Root ──────────────────────────────────────────────────────────
+export default function Dashboard() {
+  const [data,    setData]    = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [error,   setError]   = useState("");
+
+  useEffect(() => {
+    apiFetch("/api/dashboard")
+      .then(setData)
+      .catch((e) => setError(e.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const fmtDate = (iso) => iso
+    ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
+        weekday: "long", month: "long", day: "numeric",
+      })
+    : "";
+
+  if (loading) {
+    return (
+      <div style={{ color: colors.textMuted, fontSize: font.base, padding: "60px 0", textAlign: "center" }}>
+        Loading dashboard…
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div style={{
+        background: colors.dangerLight, border: `1.5px solid ${colors.dangerBorder}`,
+        borderRadius: radius.lg, padding: "16px 20px",
+        color: colors.danger, fontWeight: 600, fontSize: font.base,
+      }}>
+        Failed to load dashboard: {error}
+      </div>
+    );
+  }
+
+  const { va_counts, cba_distribution, missing } = data;
+  const maxCBA = Math.max(...cba_distribution.map((d) => d.count), 1);
+
+  return (
+    <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 28 }}>
+      <PageHeader
+        title="Dashboard"
+        subtitle="Live overview of your VA team and today's report status."
+      />
+
+      {/* ── Row 1: VA Count stat cards ─────────────────────────── */}
+      <StatRow>
+        <StatCard icon={Users}     label="Total Active VAs" value={va_counts.total} />
+        <StatCard icon={UserCheck} label="Main Community"   value={va_counts.main}  highlight="teal" />
+        <StatCard icon={UserCheck} label="CBA Community"    value={va_counts.cba}   highlight="teal" />
+        <StatCard
+          icon={missing.count > 0 ? UserX : UserCheck}
+          label={`Missing Reports · ${fmtDate(missing.date)}`}
+          value={missing.count}
+          highlight={missing.count > 0 ? "danger" : "success"}
+        />
+      </StatRow>
+
+      {/* ── Row 2: CBA Distribution + Missing Reports ──────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
+
+        {/* CBA Client Distribution */}
+        <Card title="CBA VA Hours Distribution" subtitle="VAs grouped by number of active clients">
+          <BarChart items={cba_distribution} max={maxCBA} />
+        </Card>
+
+        {/* Missing Reports Yesterday */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+          {/* Flagged (2+ consecutive days) */}
+          <Card
+            title={`⚑ Flagged VAs — ${missing.flagged_count} consecutive miss${missing.flagged_count !== 1 ? "es" : ""}`}
+            subtitle="Missed EOD 2 or more days in a row"
+            noPadding
+          >
+            {missing.flagged_vas.length === 0 ? (
+              <div style={{ padding: "16px 20px", fontSize: font.sm, color: colors.textMuted }}>
+                No VAs flagged. All clear.
+              </div>
+            ) : (
+              missing.flagged_vas.map((va, i) => (
+                <VARow
+                  key={i} va={va} i={i}
+                  badge={<StatusBadge variant="danger">Flagged</StatusBadge>}
+                />
+              ))
+            )}
+          </Card>
+
+          {/* All missing yesterday */}
+          <Card
+            title={`Missing Yesterday — ${missing.count} VA${missing.count !== 1 ? "s" : ""}`}
+            subtitle={fmtDate(missing.date)}
+            noPadding
+          >
+            {missing.vas.length === 0 ? (
+              <div style={{ padding: "16px 20px", fontSize: font.sm, color: colors.textMuted }}>
+                All VAs submitted their EOD reports.
+              </div>
+            ) : (
+              missing.vas.map((va, i) => (
+                <VARow
+                  key={i} va={va} i={i}
+                  badge={
+                    missing.flagged_vas.some((f) => f.name === va.name)
+                      ? <StatusBadge variant="danger">Flagged</StatusBadge>
+                      : <StatusBadge variant="warning">1 day</StatusBadge>
+                  }
+                />
+              ))
+            )}
+          </Card>
+
+        </div>
       </div>
     </div>
   );
