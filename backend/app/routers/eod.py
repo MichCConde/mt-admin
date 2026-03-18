@@ -10,7 +10,7 @@ from app.notion import (
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("")
 def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
     try:
         vas        = get_active_vas()          # Active + VA Team only

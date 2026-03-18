@@ -35,7 +35,11 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 # ── App ───────────────────────────────────────────────────────────
-app = FastAPI(title="MT Admin API", lifespan=lifespan)
+app = FastAPI(
+    title="MT Admin API",
+    lifespan=lifespan,
+    redirect_slashes=False,   # ← prevents 307 redirect that strips auth headers
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -48,14 +52,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# All routes require a valid Firebase token except /health
+# All routes protected — require valid Firebase token
 PROTECTED = {"dependencies": [Depends(security), Depends(verify_token)]}
 
-app.include_router(attendance.router,   prefix="/api/attendance", tags=["Attendance"], **PROTECTED)
-app.include_router(eod.router,          prefix="/api/eod",        tags=["EOD"],        **PROTECTED)
-app.include_router(inspector.router,    prefix="/api/inspector",  tags=["Inspector"],  **PROTECTED)
-app.include_router(schedule.router,     prefix="/api/schedule",   tags=["Schedule"],   **PROTECTED)
-app.include_router(email_router.router, prefix="/api/email",      tags=["Email"],      **PROTECTED)
+app.include_router(attendance.router, prefix="/api/attendance", tags=["Attendance"], **PROTECTED)
+app.include_router(eod.router,        prefix="/api/eod",        tags=["EOD"],        **PROTECTED)
+app.include_router(inspector.router,  prefix="/api/inspector",  tags=["Inspector"],  **PROTECTED)
+app.include_router(schedule.router,   prefix="/api/schedule",   tags=["Schedule"],   **PROTECTED)
+app.include_router(email_router.router, prefix="/api/email",    tags=["Email"],      **PROTECTED)
 
 @app.get("/health")
 def health():

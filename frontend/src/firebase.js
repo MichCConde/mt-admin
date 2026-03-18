@@ -1,8 +1,7 @@
 import { initializeApp } from "firebase/app";
-import { getAuth } from "firebase/auth";
+import { getAuth }       from "firebase/auth";
+import { getFirestore }  from "firebase/firestore";
 
-// Fill these in from your Firebase Console:
-// Project Settings → General → Your apps → Firebase SDK snippet → Config
 const firebaseConfig = {
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
   authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
@@ -12,6 +11,8 @@ const firebaseConfig = {
   appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-const app  = initializeApp(firebaseConfig);
+const app = initializeApp(firebaseConfig);
+
 export const auth = getAuth(app);
+export const db   = getFirestore(app);
 export default app;

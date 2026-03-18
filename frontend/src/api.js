@@ -3,42 +3,20 @@ import { auth } from "./firebase";
 const BASE = import.meta.env.VITE_API_URL ?? "http://localhost:8000";
 
 /**
- * Waits for Firebase Auth to fully initialize, then returns the ID token.
- * This prevents race conditions where currentUser is null on first load
- * even when the user is already signed in from a previous session.
+ * Gets the current Firebase ID token.
+ * auth.currentUser is always available here because App.jsx
+ * only renders components after useAuth() confirms the user is logged in.
  */
-function waitForToken() {
-  return new Promise((resolve, reject) => {
-    // Fast path: auth is already initialized with a user
-    if (auth.currentUser) {
-      auth.currentUser.getIdToken()
-        .then(resolve)
-        .catch(reject);
-      return;
-    }
-
-    // Slow path: wait for Firebase to restore the session from storage
-    // onAuthStateChanged fires once immediately when auth is ready
-    const unsubscribe = auth.onAuthStateChanged(
-      (user) => {
-        unsubscribe(); // cleanup — only need this to fire once
-        if (user) {
-          user.getIdToken().then(resolve).catch(reject);
-        } else {
-          resolve(null); // genuinely not signed in
-        }
-      },
-      reject
-    );
-  });
+async function getToken() {
+  if (!auth.currentUser) return null;
+  return auth.currentUser.getIdToken();
 }
 
 /**
- * Authenticated fetch — attaches Firebase ID token to every request.
- * Always waits for auth to be ready before sending.
+ * Authenticated fetch — attaches Firebase token to every request.
  */
 export async function apiFetch(path, options = {}) {
-  const token = await waitForToken();
+  const token = await getToken();
 
   const res = await fetch(`${BASE}${path}`, {
     ...options,

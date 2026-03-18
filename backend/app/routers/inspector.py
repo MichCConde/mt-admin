@@ -16,7 +16,7 @@ def list_vas():
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/")
+@router.get("")
 def inspect_va(
     va_name: str = Query(...),
     year:    int = Query(...),

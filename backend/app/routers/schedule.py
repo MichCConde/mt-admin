@@ -111,7 +111,7 @@ def parse_shift_blocks(shift_time_str: str) -> list[dict]:
 
 # ── Route ─────────────────────────────────────────────────────────
 
-@router.get("/")
+@router.get("")
 def get_schedule():
     """
     Returns all active VA Team VAs with parsed schedule data.

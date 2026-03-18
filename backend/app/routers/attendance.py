@@ -10,7 +10,7 @@ from app.notion import (
 
 router = APIRouter()
 
-@router.get("/")
+@router.get("")
 def check_attendance(date: str = Query(..., description="YYYY-MM-DD")):
     """
     Attendance check with punctuality based on the VA's Time In field
