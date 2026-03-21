@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.notion import (
-    get_active_vas, get_attendance_for_date,
+    get_active_vas, get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     get_active_contracts_for_va,
 )
@@ -16,7 +16,7 @@ def va_last_name(full_name: str) -> str:
 @router.get("")
 def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
     try:
-        vas        = get_active_vas()
+        vas        = get_active_vas_cached()
         attendance = get_attendance_for_date(date)
         eod_main   = get_eod_main_for_date(date)
         eod_cba    = get_eod_cba_for_date(date)

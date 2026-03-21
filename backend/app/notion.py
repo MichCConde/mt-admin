@@ -172,6 +172,19 @@ ACTIVE_EMP_STATUSES = {"Employee"}
 ALLOWED_TEAMS       = {"VA Team"}
 EXCLUDED_TEAMS      = {"Internal", "Project Based"}   # never show these
 
+# ── VA list cache ─────────────────────────────────────────────────
+_va_cache: dict = {"data": None, "expires": 0.0}
+
+def get_active_vas_cached() -> list[dict]:
+    import time
+    now = time.time()
+    if _va_cache["data"] and now < _va_cache["expires"]:
+        return _va_cache["data"]          # return cached result
+    result = get_active_vas()             # real Notion call
+    _va_cache["data"]    = result
+    _va_cache["expires"] = now + 300      # cache for 5 minutes
+    return result
+
 def get_active_vas() -> list[dict]:
     """
     Returns Active + Employee + VA Team VAs only.

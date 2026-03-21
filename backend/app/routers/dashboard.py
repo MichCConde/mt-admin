@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from app.notion import (
-    get_active_vas, get_active_contracts_for_va,
+    get_active_vas, get_active_vas_cached, get_active_contracts_for_va,
     get_eod_main_for_date, get_eod_cba_for_date,
     EST,
 )
@@ -67,7 +67,7 @@ def get_missing_for_date(vas: list, date_str: str) -> set[str]:
 def get_dashboard():
     try:
         now  = datetime.now(tz=EST)
-        vas  = get_active_vas()
+        vas  = get_active_vas_cached()
 
         # ── VA counts ─────────────────────────────────────────────
         main_vas = [v for v in vas if v.get("community") == "Main"]
