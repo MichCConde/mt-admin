@@ -11,12 +11,15 @@ app = FastAPI(
     redirect_slashes=False,
 )
 
+_frontend_url = os.getenv("FRONTEND_URL", "")
+_allowed_origins = list(filter(None, [
+    "http://localhost:5173",
+    _frontend_url,
+]))
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        os.getenv("FRONTEND_URL", "https://your-project.web.app"),
-    ],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -33,6 +36,10 @@ app.include_router(email_router.router,  prefix="/api/email",      tags=["Email"
 app.include_router(dashboard.router,     prefix="/api/dashboard",  tags=["Dashboard"],  **PROTECTED)
 
 # ── Health check (no auth) ────────────────────────────────────────
+@app.get("/")
+def root():
+    return {"name": "MT Admin API", "status": "ok", "docs": "/docs"}
+
 @app.get("/health")
 def health():
     return {"status": "ok"}
