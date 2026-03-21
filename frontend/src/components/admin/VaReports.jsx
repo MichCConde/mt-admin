@@ -161,8 +161,8 @@ function EODChecker() {
                       </span>
                     )}
                   </div>
-                  <StatusBadge variant={va.clocked_in ? "warning" : "neutral"}>
-                    {va.clocked_in ? "Clocked in, no EOD" : "No clock-in or EOD"}
+                  <StatusBadge variant={va.missing_type === "eod_only" ? "warning" : "neutral"}>
+                    {va.missing_type === "eod_only" ? "✓ Clocked in · No EOD" : "✗ No clock-in · No EOD"}
                   </StatusBadge>
                 </div>
               ))}

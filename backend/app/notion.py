@@ -332,3 +332,40 @@ def get_eod_for_va(va_name: str, community: str,
         results.append(r)
 
     return sorted(results, key=lambda r: r["date"])
+
+def parse_attendance_last_name(raw_name: str) -> str:
+    """
+    Parse the attendance record title format: "IN [Last Name], [Date]"
+    Returns just the last name in lowercase for VA matching.
+
+    Examples:
+      "IN Conde, March 20, 2026"  → "conde"
+      "OUT Reyes, March 20, 2026" → "reyes"
+      "IN dela Cruz, March 20"    → "dela cruz"  (handles compound last names)
+    """
+    # Remove "IN " or "OUT " prefix
+    clean = re.sub(r'^(IN|OUT)\s+', '', raw_name.strip(), flags=re.IGNORECASE)
+    # Everything before the first comma is the last name
+    last_name = clean.split(',')[0].strip()
+    return last_name.lower()
+
+
+def get_attendance_for_date(date_str: str) -> list[dict]:
+    utc_start, utc_end = est_day_bounds(date_str)
+    pages = query_all(DB["attendance"], {
+        "and": [
+            {"timestamp": "created_time", "created_time": {"on_or_after": utc_start}},
+            {"timestamp": "created_time", "created_time": {"before":      utc_end}},
+        ]
+    })
+    return [
+        {
+            "id":           p["id"],
+            "raw_name":     get_prop(p, "Name"),
+            "last_name":    parse_attendance_last_name(get_prop(p, "Name")),
+            "type":         get_prop(p, "Type"),
+            "created_time": p["created_time"],
+            "notes":        get_prop(p, "Clock In Notes"),  # client info lives here for now
+        }
+        for p in pages
+    ]
