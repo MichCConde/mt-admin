@@ -1,7 +1,7 @@
 import { useState } from "react";
 import {
   LayoutDashboard, ClipboardList, UserSearch,
-  CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut, ScrollText,
+  CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut, ScrollText, FileSpreadsheet,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
 import { auth }   from "../../firebase";
@@ -11,6 +11,7 @@ import VAReports    from "../admin/VaReports";
 import VAInspector  from "../admin/VaInspector";
 import Schedule     from "../admin/Schedule";
 import ActivityLogs from "../admin/ActivityLogs";
+import EowReports   from "../admin/EowReports";
 import { SoonBadge } from "../ui/Indicators";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
 
@@ -19,6 +20,7 @@ const NAV = [
   { id: "va_reports",   icon: ClipboardList,   label: "VA Reports",     sub: "EOD & Attendance", component: VAReports    },
   { id: "va_inspector", icon: UserSearch,      label: "VA Inspector",   sub: "Per-VA history",   component: VAInspector  },
   { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
+  { id: "eow_reports",  icon: FileSpreadsheet, label: "EOW Reports",    sub: "End-of-week summaries", component: EowReports },
   { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
 ];
 
