@@ -1,40 +1,51 @@
 import smtplib
-import os
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from fastapi import APIRouter, HTTPException
+from app.config import settings
 from app.notion import (
-    get_active_vas, get_active_vas_cached, get_attendance_for_date,
+    get_active_vas, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    get_active_contracts_for_va, va_works_on_date,
+    get_all_active_contracts_by_va_id, va_works_on_date,
     EST,
 )
 
 router = APIRouter()
 
 
-# ── Config ────────────────────────────────────────────────────────
-
-def get_email_config():
-    return {
-        "sender":     os.getenv("EMAIL_SENDER"),
-        "password":   os.getenv("EMAIL_APP_PASSWORD"),
-        "recipients": [r.strip() for r in os.getenv("EMAIL_RECIPIENTS", "").split(",") if r.strip()],
-    }
-
-
 def va_last_name(full_name: str) -> str:
     return full_name.strip().split()[-1].lower()
+
+
+# ── Send function ─────────────────────────────────────────────────
+
+def send_email(subject: str, html_body: str):
+    if not settings.email_sender or not settings.email_app_password or not settings.email_recipient_list:
+        raise ValueError(
+            "Email config incomplete. "
+            "Check EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENTS in .env"
+        )
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"MT Admin <{settings.email_sender}>"
+    msg["To"]      = ", ".join(settings.email_recipient_list)
+    msg.attach(MIMEText(html_body, "html"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(settings.email_sender, settings.email_app_password)
+        server.sendmail(settings.email_sender, settings.email_recipient_list, msg.as_string())
 
 
 # ── Core report builder ───────────────────────────────────────────
 
 def build_missing_report(date_str: str) -> dict:
-    vas        = get_active_vas()
-    attendance = get_attendance_for_date(date_str)
-    eod_main   = get_eod_main_for_date(date_str)
-    eod_cba    = get_eod_cba_for_date(date_str)
+    vas             = get_active_vas()
+    contracts_by_va = get_all_active_contracts_by_va_id()
+    attendance      = get_attendance_for_date(date_str)
+    eod_main        = get_eod_main_for_date(date_str)
+    eod_cba         = get_eod_cba_for_date(date_str)
 
     clock_ins          = [a for a in attendance if a["type"] == "IN"]
     clocked_last_names = {a["last_name"] for a in clock_ins}
@@ -48,8 +59,6 @@ def build_missing_report(date_str: str) -> dict:
         cba_idx.setdefault((r["name"].lower(), r["client"].lower()), []).append(r)
 
     missing, submitted = [], []
-
-    # Only evaluate VAs who are scheduled to work on this date
     working_vas = [va for va in vas if va_works_on_date(va, date_str)]
 
     for va in working_vas:
@@ -70,7 +79,7 @@ def build_missing_report(date_str: str) -> dict:
                 })
 
         elif community == "CBA":
-            contracts = get_active_contracts_for_va(va.get("contract_ids", []))
+            contracts = contracts_by_va.get(va["id"], [])
             if not contracts:
                 reports = [r for r in eod_cba if r["name"].lower() == key]
                 if reports:
@@ -96,8 +105,6 @@ def build_missing_report(date_str: str) -> dict:
                     })
 
     late = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
-
-    # No-clock-in list also scoped to VAs working today
     no_clock_in = [
         va for va in working_vas
         if va_last_name(va["name"]) not in clocked_last_names
@@ -105,7 +112,7 @@ def build_missing_report(date_str: str) -> dict:
 
     return {
         "date":             date_str,
-        "total_vas":        len(working_vas),   # reflects scheduled VAs only
+        "total_vas":        len(working_vas),
         "submitted_count":  len(submitted),
         "clocked_in_count": len(clock_ins),
         "missing":          missing,
@@ -165,7 +172,6 @@ def build_html_email(report: dict) -> str:
           </td>
         </tr>"""
 
-    # ── Sections ──────────────────────────────────────────────────
     all_clear_section = """
       <div style="background:#ECFDF5;border:1.5px solid #A7F3D0;border-radius:10px;padding:16px 20px;text-align:center;">
         <div style="font-size:18px;font-weight:800;color:#059669;">✓ All Clear</div>
@@ -182,9 +188,7 @@ def build_html_email(report: dict) -> str:
           <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;overflow:hidden;">
             <div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;display:flex;justify-content:space-between;align-items:center;">
               <strong style="color:#DC2626;font-size:14px;">⚠ {len(missing)} Missing EOD Report{"s" if len(missing)!=1 else ""}</strong>
-              <span style="font-size:11px;color:#6B7280;">
-                {len(eod_only)} clocked in · {len(both_missing)} no clock-in
-              </span>
+              <span style="font-size:11px;color:#6B7280;">{len(eod_only)} clocked in · {len(both_missing)} no clock-in</span>
             </div>
             <table style="width:100%;border-collapse:collapse;">{rows}</table>
           </div>
@@ -220,24 +224,14 @@ def build_html_email(report: dict) -> str:
 <html>
 <body style="margin:0;padding:0;background:#F2F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
   <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
-
-    <!-- Header -->
-    <div style="background:#0D1F3C;padding:24px 32px;display:flex;align-items:center;gap:16px;">
-      <div>
-        <div style="font-size:20px;font-weight:800;color:#fff;">MT Admin</div>
-        <div style="font-size:12px;color:#4A6080;margin-top:2px;">Daily EOD Report</div>
-      </div>
+    <div style="background:#0D1F3C;padding:24px 32px;">
+      <div style="font-size:20px;font-weight:800;color:#fff;">MT Admin</div>
+      <div style="font-size:12px;color:#4A6080;margin-top:2px;">Daily EOD Report</div>
     </div>
-
-    <!-- Date bar -->
     <div style="background:#0CB8A9;padding:12px 32px;">
       <div style="font-size:14px;font-weight:700;color:#fff;">{date_label}</div>
     </div>
-
-    <!-- Body -->
     <div style="padding:28px 32px;">
-
-      <!-- Stats -->
       <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
         <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
           <div style="font-size:24px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div>
@@ -260,14 +254,11 @@ def build_html_email(report: dict) -> str:
           <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">LATE</div>
         </div>
       </div>
-
       {all_clear_section}
       {missing_section}
       {late_section}
       {no_clock_section}
     </div>
-
-    <!-- Footer -->
     <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;">
       <div style="font-size:12px;color:#9CA3AF;">
         This is an automated report from MT Admin. All times are in EST.
@@ -279,29 +270,12 @@ def build_html_email(report: dict) -> str:
 </html>"""
 
 
-# ── Send function ─────────────────────────────────────────────────
-
-def send_email(subject: str, html_body: str):
-    cfg = get_email_config()
-    if not cfg["sender"] or not cfg["password"] or not cfg["recipients"]:
-        raise ValueError("Email config incomplete. Check EMAIL_SENDER, EMAIL_APP_PASSWORD, EMAIL_RECIPIENTS in .env")
-
-    msg = MIMEMultipart("alternative")
-    msg["Subject"] = subject
-    msg["From"]    = f"MT Admin <{cfg['sender']}>"
-    msg["To"]      = ", ".join(cfg["recipients"])
-    msg.attach(MIMEText(html_body, "html"))
-
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(cfg["sender"], cfg["password"])
-        server.sendmail(cfg["sender"], cfg["recipients"], msg.as_string())
-
-
 # ── Routes ────────────────────────────────────────────────────────
 
 @router.post("/send-morning-report")
 def send_morning_report():
     try:
+        from datetime import datetime
         yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
         report    = build_missing_report(yesterday)
 
@@ -315,7 +289,7 @@ def send_morning_report():
         return {
             "sent":       True,
             "date":       yesterday,
-            "recipients": get_email_config()["recipients"],
+            "recipients": settings.email_recipient_list,
             "summary": {
                 "missing":     len(report["missing"]),
                 "late":        len(report["late"]),
@@ -329,8 +303,8 @@ def send_morning_report():
 @router.post("/send-report/{date}")
 def send_report_for_date(date: str):
     try:
-        report = build_missing_report(date)
-        total  = len(report["missing"]) + len(report["late"])
+        report  = build_missing_report(date)
+        total   = len(report["missing"]) + len(report["late"])
         subject = (
             f"[MT Admin] ✓ All Clear — {date}"
             if total == 0 else

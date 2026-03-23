@@ -1,19 +1,19 @@
 from notion_client import Client
 from datetime import datetime, timedelta, timezone
-import os, re
-from dotenv import load_dotenv
+import re
+from app.config import settings
 
-load_dotenv()
-
-notion = Client(auth=os.getenv("NOTION_TOKEN"))
+notion = Client(auth=settings.notion_token)
 
 DB = {
-    "va":         os.getenv("VA_DB_ID"),
-    "eod_main":   os.getenv("EOD_MAIN_DB_ID"),
-    "eod_cba":    os.getenv("EOD_CBA_DB_ID"),
-    "attendance": os.getenv("ATTENDANCE_DB_ID"),
-    "contracts":  os.getenv("CONTRACTS_DB_ID"),
+    "va":         settings.va_db_id,
+    "eod_main":   settings.eod_main_db_id,
+    "eod_cba":    settings.eod_cba_db_id,
+    "attendance": settings.attendance_db_id,
+    "contracts":  settings.contracts_db_id,
 }
+
+# ── Everything below this line stays exactly the same ─────────────
 
 EST            = timezone(timedelta(hours=-5))
 PHT            = timezone(timedelta(hours=+8))

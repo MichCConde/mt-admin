@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timedelta, date as date_type
 from app.notion import (
-    get_active_vas, get_active_contracts_for_va,
+    get_active_vas, get_all_active_contracts_by_va_id,
     get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     EST,
@@ -53,7 +53,6 @@ def detect_duplicate_eod(reports: list[dict]) -> list[dict]:
     flagged = []
 
     for r in sorted(reports, key=lambda x: x["date"]):
-        # Build a content signature from all meaningful fields
         sig = (
             r.get("name", "").lower(),
             r.get("client", "").lower(),
@@ -64,7 +63,6 @@ def detect_duplicate_eod(reports: list[dict]) -> list[dict]:
             str(r.get("website_apps", "")),
             str(r.get("follow_ups",   "")),
         )
-        # Only flag if at least one numeric field is non-zero/non-empty
         has_content = any([
             r.get("time_in"), r.get("time_out"),
             r.get("new_leads"), r.get("email_apps"),
@@ -84,8 +82,9 @@ def get_eow_report(
     end:   str = Query(..., description="YYYY-MM-DD — Saturday of the week"),
 ):
     try:
-        vas      = get_active_vas()
-        workdays = workdays_in_range(start, end)
+        vas             = get_active_vas()
+        contracts_by_va = get_all_active_contracts_by_va_id()  # 1 query, not N
+        workdays        = workdays_in_range(start, end)
 
         # ── Fetch all data for the week upfront ───────────────────
         week_attendance: dict[str, list] = {}
@@ -105,19 +104,18 @@ def get_eow_report(
             full_key  = va["name"].strip().lower()
             last      = va_last_name(va["name"])
             community = va.get("community", "")
-            contracts = []
-            if community == "CBA":
-                contracts = get_active_contracts_for_va(va.get("contract_ids", []))
 
-            daily = []
-            va_all_eod = []   # all EOD reports this VA submitted this week
+            # O(1) dict lookup — no extra Notion call per VA
+            contracts = contracts_by_va.get(va["id"], []) if community == "CBA" else []
+
+            daily      = []
+            va_all_eod = []
 
             for d in workdays:
                 att        = week_attendance[d]
                 clock_ins  = [a for a in att if a["type"] == "IN"]
                 clocked_in = any(a["last_name"] == last for a in clock_ins)
 
-                # Collect clock-in notes for keyword scanning
                 clock_notes = " ".join(
                     a.get("notes", "") for a in clock_ins
                     if a["last_name"] == last
@@ -156,7 +154,6 @@ def get_eow_report(
                             "client":        None,
                         })
                     else:
-                        # One entry per contract per day
                         for contract in contracts:
                             client_key = contract["client_name"].lower()
                             reports = [
@@ -178,21 +175,26 @@ def get_eow_report(
             duplicates = detect_duplicate_eod(va_all_eod)
 
             # ── Aggregate stats ───────────────────────────────────
-            unique_days    = list({e["date"] for e in daily})
-            missing_days   = [e for e in daily if not e["eod_submitted"]]
-            no_clockin     = [e for e in daily if not e["clocked_in"]]
-            all_kw_flags   = list({f for e in daily for f in e["keyword_flags"]})
+            unique_days  = list({e["date"] for e in daily})
+            missing_days = [e for e in daily if not e["eod_submitted"]]
+            no_clockin   = [e for e in daily if not e["clocked_in"]]
+            all_kw_flags = list({f for e in daily for f in e["keyword_flags"]})
+
+            # contract_slots: how many EOD slots exist per workday for this VA
+            # stored here so total_possible_eod can use it without a second lookup
+            contract_slots = max(len(contracts), 1) if community == "CBA" else 1
 
             va_summaries.append({
-                "va":            va,
-                "community":     community,
-                "daily":         daily,
+                "va":             va,
+                "community":      community,
+                "daily":          daily,
+                "contract_slots": contract_slots,   # used below for totals
                 "stats": {
-                    "total_days":      len(workdays),
-                    "submitted_count": len(unique_days) - len({e["date"] for e in missing_days}),
-                    "missing_count":   len({e["date"] for e in missing_days}),
+                    "total_days":       len(workdays),
+                    "submitted_count":  len(unique_days) - len({e["date"] for e in missing_days}),
+                    "missing_count":    len({e["date"] for e in missing_days}),
                     "no_clockin_count": len({e["date"] for e in no_clockin}),
-                    "late_count":      sum(
+                    "late_count": sum(
                         1 for e in daily
                         for r in e["reports"]
                         if not r.get("punctuality", {}).get("on_time", True)
@@ -206,27 +208,19 @@ def get_eow_report(
                 },
             })
 
-            # Collect global flags for the summary section
             if all_kw_flags or duplicates:
                 all_flags.append({
-                    "va_name":    va["name"],
-                    "community":  community,
-                    "keywords":   all_kw_flags,
+                    "va_name":   va["name"],
+                    "community": community,
+                    "keywords":  all_kw_flags,
                     "duplicates": len(duplicates),
                 })
 
         # Sort: most flags first
         va_summaries.sort(key=lambda x: -x["stats"]["flag_count"])
 
-        # Total possible EOD submissions = sum of (workdays × client slots per VA)
-        total_possible_eod = sum(
-            s["stats"]["total_days"] * max(
-                len(get_active_contracts_for_va(s["va"].get("contract_ids", []))) or 1, 1
-            ) if s["community"] == "CBA"
-            else s["stats"]["total_days"]
-            for s in va_summaries
-        )
-        # Total possible clock-ins = VAs × workdays (one per VA per day)
+        # total_possible_eod now uses pre-computed contract_slots — no extra Notion calls
+        total_possible_eod      = sum(s["contract_slots"] * s["stats"]["total_days"] for s in va_summaries)
         total_possible_clockins = len(vas) * len(workdays)
 
         return {
@@ -237,13 +231,13 @@ def get_eow_report(
             "va_summaries": va_summaries,
             "flags":        all_flags,
             "totals": {
-                "missing_eod":          sum(s["stats"]["missing_count"]    for s in va_summaries),
-                "possible_eod":         total_possible_eod,
-                "no_clockin":           sum(s["stats"]["no_clockin_count"] for s in va_summaries),
-                "possible_clockins":    total_possible_clockins,
-                "late":                 sum(s["stats"]["late_count"]       for s in va_summaries),
-                "duplicates":           sum(s["stats"]["duplicate_count"]  for s in va_summaries),
-                "keyword_flags":        sum(len(s["flags"]["keywords"])    for s in va_summaries),
+                "missing_eod":       sum(s["stats"]["missing_count"]    for s in va_summaries),
+                "possible_eod":      total_possible_eod,
+                "no_clockin":        sum(s["stats"]["no_clockin_count"] for s in va_summaries),
+                "possible_clockins": total_possible_clockins,
+                "late":              sum(s["stats"]["late_count"]       for s in va_summaries),
+                "duplicates":        sum(s["stats"]["duplicate_count"]  for s in va_summaries),
+                "keyword_flags":     sum(len(s["flags"]["keywords"])    for s in va_summaries),
             },
         }
 

@@ -2,7 +2,7 @@ from fastapi import APIRouter, Query, HTTPException
 from app.notion import (
     get_active_vas, get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    get_active_contracts_for_va, va_works_on_date,
+    get_all_active_contracts_by_va_id, va_works_on_date,
 )
 
 router = APIRouter()
@@ -15,12 +15,13 @@ def va_last_name(full_name: str) -> str:
 @router.get("")
 def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
     try:
-        vas        = get_active_vas_cached()
-        attendance = get_attendance_for_date(date)
-        eod_main   = get_eod_main_for_date(date)
-        eod_cba    = get_eod_cba_for_date(date)
+        vas             = get_active_vas_cached()
+        contracts_by_va = get_all_active_contracts_by_va_id()  # 1 query, not N
+        attendance      = get_attendance_for_date(date)
+        eod_main        = get_eod_main_for_date(date)
+        eod_cba         = get_eod_cba_for_date(date)
 
-        clock_ins = [a for a in attendance if a["type"] == "IN"]
+        clock_ins          = [a for a in attendance if a["type"] == "IN"]
         clocked_last_names = {a["last_name"] for a in clock_ins}
 
         main_idx: dict[str, list] = {}
@@ -50,8 +51,8 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                 else:
                     missing.append({
                         **va,
-                        "clocked_in":    clocked_in,
-                        "missing_type":  "clock_in_only" if not clocked_in else "eod_only",
+                        "clocked_in":     clocked_in,
+                        "missing_type":   "clock_in_only" if not clocked_in else "eod_only",
                         "missing_reason": (
                             "No clock-in and no EOD report"
                             if not clocked_in
@@ -60,7 +61,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     })
 
             elif community == "CBA":
-                contracts = get_active_contracts_for_va(va.get("contract_ids", []))
+                contracts = contracts_by_va.get(va["id"], [])  # O(1) lookup
 
                 if not contracts:
                     reports = [r for r in eod_cba if r["name"].lower() == key]
@@ -69,8 +70,8 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     else:
                         missing.append({
                             **va,
-                            "clocked_in":    clocked_in,
-                            "missing_type":  "clock_in_only" if not clocked_in else "eod_only",
+                            "clocked_in":     clocked_in,
+                            "missing_type":   "clock_in_only" if not clocked_in else "eod_only",
                             "missing_reason": (
                                 "No clock-in and no EOD report"
                                 if not clocked_in
