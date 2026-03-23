@@ -5,11 +5,9 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException
 from app.notion import (
-    get_active_vas,
-    get_attendance_for_date,
-    get_eod_main_for_date,
-    get_eod_cba_for_date,
-    get_active_contracts_for_va,
+    get_active_vas, get_active_vas_cached, get_attendance_for_date,
+    get_eod_main_for_date, get_eod_cba_for_date,
+    get_active_contracts_for_va, va_works_on_date,
     EST,
 )
 
@@ -39,7 +37,6 @@ def build_missing_report(date_str: str) -> dict:
     eod_cba    = get_eod_cba_for_date(date_str)
 
     clock_ins          = [a for a in attendance if a["type"] == "IN"]
-    # Use last_name field from our updated get_attendance_for_date
     clocked_last_names = {a["last_name"] for a in clock_ins}
 
     main_idx: dict[str, list] = {}
@@ -52,7 +49,10 @@ def build_missing_report(date_str: str) -> dict:
 
     missing, submitted = [], []
 
-    for va in vas:
+    # Only evaluate VAs who are scheduled to work on this date
+    working_vas = [va for va in vas if va_works_on_date(va, date_str)]
+
+    for va in working_vas:
         key        = va["name"].strip().lower()
         last       = va_last_name(va["name"])
         clocked_in = last in clocked_last_names
@@ -64,9 +64,9 @@ def build_missing_report(date_str: str) -> dict:
             else:
                 missing.append({
                     **va,
-                    "clocked_in":    clocked_in,
+                    "clocked_in":     clocked_in,
                     "missing_client": None,
-                    "missing_type":  "eod_only" if clocked_in else "clock_in_only",
+                    "missing_type":   "eod_only" if clocked_in else "clock_in_only",
                 })
 
         elif community == "CBA":
@@ -78,9 +78,9 @@ def build_missing_report(date_str: str) -> dict:
                 else:
                     missing.append({
                         **va,
-                        "clocked_in":    clocked_in,
+                        "clocked_in":     clocked_in,
                         "missing_client": None,
-                        "missing_type":  "eod_only" if clocked_in else "clock_in_only",
+                        "missing_type":   "eod_only" if clocked_in else "clock_in_only",
                     })
                 continue
             for contract in contracts:
@@ -97,20 +97,20 @@ def build_missing_report(date_str: str) -> dict:
 
     late = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
 
-    # VAs with no clock-in at all (matched by last name)
+    # No-clock-in list also scoped to VAs working today
     no_clock_in = [
-        va for va in vas
+        va for va in working_vas
         if va_last_name(va["name"]) not in clocked_last_names
     ]
 
     return {
-        "date":            date_str,
-        "total_vas":       len(vas),
-        "submitted_count": len(submitted),
+        "date":             date_str,
+        "total_vas":        len(working_vas),   # reflects scheduled VAs only
+        "submitted_count":  len(submitted),
         "clocked_in_count": len(clock_ins),
-        "missing":         missing,
-        "late":            late,
-        "no_clock_in":     no_clock_in,
+        "missing":          missing,
+        "late":             late,
+        "no_clock_in":      no_clock_in,
     }
 
 
@@ -129,7 +129,6 @@ def build_html_email(report: dict) -> str:
         return f'<span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>'
 
     def missing_type_tag(va):
-        """Show clearly whether the VA missed their EOD, clock-in, or both."""
         t = va.get("missing_type", "clock_in_only")
         if t == "eod_only":
             return '<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>'
@@ -175,10 +174,8 @@ def build_html_email(report: dict) -> str:
 
     missing_section = ""
     if missing:
-        # Split into two groups for clarity
-        eod_only    = [v for v in missing if v.get("missing_type") == "eod_only"]
+        eod_only     = [v for v in missing if v.get("missing_type") == "eod_only"]
         both_missing = [v for v in missing if v.get("missing_type") != "eod_only"]
-
         rows = "".join(missing_row(va) for va in missing)
         missing_section = f"""
         <div style="margin-bottom:24px;">
@@ -240,7 +237,7 @@ def build_html_email(report: dict) -> str:
     <!-- Body -->
     <div style="padding:28px 32px;">
 
-      <!-- Stats — now includes clock-ins -->
+      <!-- Stats -->
       <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
         <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
           <div style="font-size:24px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div>
@@ -316,8 +313,8 @@ def send_morning_report():
         )
         send_email(subject, build_html_email(report))
         return {
-            "sent":      True,
-            "date":      yesterday,
+            "sent":       True,
+            "date":       yesterday,
             "recipients": get_email_config()["recipients"],
             "summary": {
                 "missing":     len(report["missing"]),
@@ -332,8 +329,8 @@ def send_morning_report():
 @router.post("/send-report/{date}")
 def send_report_for_date(date: str):
     try:
-        report  = build_missing_report(date)
-        total   = len(report["missing"]) + len(report["late"])
+        report = build_missing_report(date)
+        total  = len(report["missing"]) + len(report["late"])
         subject = (
             f"[MT Admin] ✓ All Clear — {date}"
             if total == 0 else

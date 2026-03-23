@@ -2,14 +2,13 @@ from fastapi import APIRouter, Query, HTTPException
 from app.notion import (
     get_active_vas, get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    get_active_contracts_for_va,
+    get_active_contracts_for_va, va_works_on_date,
 )
 
 router = APIRouter()
 
 
 def va_last_name(full_name: str) -> str:
-    """Extract last name from a full VA name for attendance matching."""
     return full_name.strip().split()[-1].lower()
 
 
@@ -22,11 +21,8 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
         eod_cba    = get_eod_cba_for_date(date)
 
         clock_ins = [a for a in attendance if a["type"] == "IN"]
-
-        # Match by last name — attendance records use "IN [Last Name], [Date]" format
         clocked_last_names = {a["last_name"] for a in clock_ins}
 
-        # Index EOD submissions
         main_idx: dict[str, list] = {}
         for r in eod_main:
             main_idx.setdefault(r["name"].lower(), []).append(r)
@@ -38,6 +34,10 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
         submitted_all, missing = [], []
 
         for va in vas:
+            # Skip VAs who don't work on this day (e.g. Mon-Fri VAs on Saturday)
+            if not va_works_on_date(va, date):
+                continue
+
             key        = va["name"].strip().lower()
             last       = va_last_name(va["name"])
             clocked_in = last in clocked_last_names
@@ -51,7 +51,6 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     missing.append({
                         **va,
                         "clocked_in":    clocked_in,
-                        # Tells the frontend exactly what is missing
                         "missing_type":  "clock_in_only" if not clocked_in else "eod_only",
                         "missing_reason": (
                             "No clock-in and no EOD report"
