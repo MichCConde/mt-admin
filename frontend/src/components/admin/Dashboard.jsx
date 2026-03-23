@@ -4,6 +4,7 @@ import { colors, font, radius, shadow } from "../../styles/tokens";
 import { apiFetch }              from "../../api";
 import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
 import { Card, SectionLabel, PageHeader, StatRow } from "../ui/Structure";
+import { cacheGet, cacheSet } from "../../utils/reportCache";
 
 // ── Bar chart used in CBA distribution ───────────────────────────
 function BarChart({ items, max }) {
@@ -80,15 +81,18 @@ function VARow({ va, badge, i }) {
 }
 
 // ── Root ──────────────────────────────────────────────────────────
+const CACHE_KEY = "dashboard:summary";
+
 export default function Dashboard() {
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [data,    setData]    = useState(() => cacheGet(CACHE_KEY));
+  const [loading, setLoading] = useState(!cacheGet(CACHE_KEY));
   const [error,   setError]   = useState("");
 
   useEffect(() => {
+    if (cacheGet(CACHE_KEY)) return;   // already cached — skip fetch
     apiFetch("/api/dashboard")
-      .then(setData)
-      .catch((e) => setError(e.message))
+      .then(d => { cacheSet(CACHE_KEY, d); setData(d); })
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 

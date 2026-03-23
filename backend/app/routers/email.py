@@ -15,6 +15,7 @@ from app.notion import (
 
 router = APIRouter()
 
+
 # ── Config ────────────────────────────────────────────────────────
 
 def get_email_config():
@@ -25,20 +26,21 @@ def get_email_config():
     }
 
 
+def va_last_name(full_name: str) -> str:
+    return full_name.strip().split()[-1].lower()
+
+
 # ── Core report builder ───────────────────────────────────────────
 
 def build_missing_report(date_str: str) -> dict:
-    """
-    Runs the same logic as the EOD checker and returns
-    structured data for the email.
-    """
     vas        = get_active_vas()
     attendance = get_attendance_for_date(date_str)
     eod_main   = get_eod_main_for_date(date_str)
     eod_cba    = get_eod_cba_for_date(date_str)
 
-    clock_ins     = [a for a in attendance if a["type"] == "IN"]
-    clocked_names = {a["raw_name"].strip().lower() for a in clock_ins}
+    clock_ins          = [a for a in attendance if a["type"] == "IN"]
+    # Use last_name field from our updated get_attendance_for_date
+    clocked_last_names = {a["last_name"] for a in clock_ins}
 
     main_idx: dict[str, list] = {}
     for r in eod_main:
@@ -52,42 +54,63 @@ def build_missing_report(date_str: str) -> dict:
 
     for va in vas:
         key        = va["name"].strip().lower()
-        clocked_in = key in clocked_names
+        last       = va_last_name(va["name"])
+        clocked_in = last in clocked_last_names
         community  = va.get("community", "")
 
         if community == "Main":
             if main_idx.get(key):
                 submitted.extend(main_idx[key])
             else:
-                missing.append({**va, "clocked_in": clocked_in, "missing_client": None})
+                missing.append({
+                    **va,
+                    "clocked_in":    clocked_in,
+                    "missing_client": None,
+                    "missing_type":  "eod_only" if clocked_in else "clock_in_only",
+                })
 
         elif community == "CBA":
             contracts = get_active_contracts_for_va(va.get("contract_ids", []))
             if not contracts:
                 reports = [r for r in eod_cba if r["name"].lower() == key]
-                if reports: submitted.extend(reports)
-                else: missing.append({**va, "clocked_in": clocked_in, "missing_client": None})
+                if reports:
+                    submitted.extend(reports)
+                else:
+                    missing.append({
+                        **va,
+                        "clocked_in":    clocked_in,
+                        "missing_client": None,
+                        "missing_type":  "eod_only" if clocked_in else "clock_in_only",
+                    })
                 continue
             for contract in contracts:
                 client_key = contract["client_name"].lower()
                 if cba_idx.get((key, client_key)):
                     submitted.extend(cba_idx[(key, client_key)])
                 else:
-                    missing.append({**va, "clocked_in": clocked_in, "missing_client": contract["client_name"]})
+                    missing.append({
+                        **va,
+                        "clocked_in":     clocked_in,
+                        "missing_client": contract["client_name"],
+                        "missing_type":   "eod_only" if clocked_in else "clock_in_only",
+                    })
 
-    # Late submissions
     late = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
 
-    # No clock-in at all
-    no_clock_in = [va for va in vas if va["name"].strip().lower() not in clocked_names]
+    # VAs with no clock-in at all (matched by last name)
+    no_clock_in = [
+        va for va in vas
+        if va_last_name(va["name"]) not in clocked_last_names
+    ]
 
     return {
-        "date":           date_str,
-        "total_vas":      len(vas),
-        "missing":        missing,
-        "late":           late,
-        "no_clock_in":    no_clock_in,
+        "date":            date_str,
+        "total_vas":       len(vas),
         "submitted_count": len(submitted),
+        "clocked_in_count": len(clock_ins),
+        "missing":         missing,
+        "late":            late,
+        "no_clock_in":     no_clock_in,
     }
 
 
@@ -100,34 +123,71 @@ def build_html_email(report: dict) -> str:
     no_clock   = report["no_clock_in"]
     all_clear  = not missing and not late and not no_clock
 
-    def va_row(va, extra=""):
-        community = va.get("community", "")
+    def community_badge(va):
+        community   = va.get("community", "")
         badge_color = {"Main": "#1D4ED8", "CBA": "#C2410C"}.get(community, "#6B7280")
-        client_note = f" — {va['missing_client']}" if va.get("missing_client") else ""
-        clocked     = va.get("clocked_in", False)
-        clock_tag   = (
-            '<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">Clocked in, no EOD</span>'
-            if clocked else
-            '<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">No clock-in or EOD</span>'
-        )
+        return f'<span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>'
+
+    def missing_type_tag(va):
+        """Show clearly whether the VA missed their EOD, clock-in, or both."""
+        t = va.get("missing_type", "clock_in_only")
+        if t == "eod_only":
+            return '<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>'
+        return '<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✗ No clock-in · No EOD</span>'
+
+    def missing_row(va):
+        client_note = f' <span style="color:#6B7280;font-size:12px;">— {va["missing_client"]}</span>' if va.get("missing_client") else ""
         return f"""
         <tr>
           <td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">
-            <span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>
-            <strong>{va['name']}</strong>{client_note}
-            {clock_tag}
-            {extra}
+            {community_badge(va)}<strong>{va['name']}</strong>{client_note}{missing_type_tag(va)}
           </td>
         </tr>"""
 
+    def late_row(r):
+        return f"""
+        <tr>
+          <td style="padding:10px 16px;border-bottom:1px solid #FDE68A;">
+            <strong>{r['name']}</strong>
+            {f'<span style="color:#6B7280;font-size:12px;margin-left:6px;">{r.get("client","")}</span>' if r.get("client") else ""}
+            <span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:8px;">
+              Submitted {r['punctuality']['submitted_est']} — {r['punctuality']['minutes_late']}m late
+            </span>
+          </td>
+        </tr>"""
+
+    def no_clock_row(va, i):
+        bg = "#FFF8F8" if i % 2 == 0 else "#FFF2F2"
+        return f"""
+        <tr style="background:{bg};">
+          <td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">
+            {community_badge(va)}<strong>{va['name']}</strong>
+            <span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">No clock-in recorded</span>
+          </td>
+        </tr>"""
+
+    # ── Sections ──────────────────────────────────────────────────
+    all_clear_section = """
+      <div style="background:#ECFDF5;border:1.5px solid #A7F3D0;border-radius:10px;padding:16px 20px;text-align:center;">
+        <div style="font-size:18px;font-weight:800;color:#059669;">✓ All Clear</div>
+        <div style="font-size:13px;color:#6B7280;margin-top:4px;">All VAs submitted their EOD reports on time.</div>
+      </div>""" if all_clear else ""
+
     missing_section = ""
     if missing:
-        rows = "".join(va_row(va) for va in missing)
+        # Split into two groups for clarity
+        eod_only    = [v for v in missing if v.get("missing_type") == "eod_only"]
+        both_missing = [v for v in missing if v.get("missing_type") != "eod_only"]
+
+        rows = "".join(missing_row(va) for va in missing)
         missing_section = f"""
         <div style="margin-bottom:24px;">
           <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;overflow:hidden;">
-            <div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;">
+            <div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;display:flex;justify-content:space-between;align-items:center;">
               <strong style="color:#DC2626;font-size:14px;">⚠ {len(missing)} Missing EOD Report{"s" if len(missing)!=1 else ""}</strong>
+              <span style="font-size:11px;color:#6B7280;">
+                {len(eod_only)} clocked in · {len(both_missing)} no clock-in
+              </span>
             </div>
             <table style="width:100%;border-collapse:collapse;">{rows}</table>
           </div>
@@ -135,74 +195,41 @@ def build_html_email(report: dict) -> str:
 
     late_section = ""
     if late:
-        late_rows = "".join(f"""
-        <tr>
-          <td style="padding:10px 16px;border-bottom:1px solid #FDE68A;">
-            <strong>{r['name']}</strong>
-            <span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:8px;">
-              Submitted {r['punctuality']['submitted_est']} — {r['punctuality']['minutes_late']}m late
-            </span>
-          </td>
-        </tr>""" for r in late)
+        rows = "".join(late_row(r) for r in late)
         late_section = f"""
         <div style="margin-bottom:24px;">
           <div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden;">
             <div style="background:#FFFDF0;padding:12px 16px;border-bottom:1px solid #FDE68A;">
               <strong style="color:#D97706;font-size:14px;">⏱ {len(late)} Late Submission{"s" if len(late)!=1 else ""}</strong>
             </div>
-            <table style="width:100%;border-collapse:collapse;">{late_rows}</table>
+            <table style="width:100%;border-collapse:collapse;">{rows}</table>
           </div>
         </div>"""
 
     no_clock_section = ""
     if no_clock:
-        def community_color(va):
-            colors_map = {"Main": "#1D4ED8", "CBA": "#C2410C"}
-            return colors_map.get(va.get("community", ""), "#6B7280")
-
-        nc_rows = ""
-        for va in no_clock:
-            bg    = community_color(va)
-            comm  = va.get("community", "")
-            name  = va["name"]
-            nc_rows += f"""
-        <tr>
-          <td style="padding:10px 16px;border-bottom:1px solid #FECACA;">
-            <span style="background:{bg};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{comm}</span>
-            <strong>{name}</strong>
-          </td>
-        </tr>"""
-
-        count = len(no_clock)
-        suffix = "s" if count != 1 else ""
+        rows = "".join(no_clock_row(va, i) for i, va in enumerate(no_clock))
         no_clock_section = f"""
         <div style="margin-bottom:24px;">
-          <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;overflow:hidden;">
-            <div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;">
-              <strong style="color:#DC2626;font-size:14px;">&#x2717; {count} No Clock-In Record{suffix}</strong>
+          <div style="background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:10px;overflow:hidden;">
+            <div style="background:#F3F4F6;padding:12px 16px;border-bottom:1px solid #E5E7EB;">
+              <strong style="color:#374151;font-size:14px;">🔔 {len(no_clock)} VA{"s" if len(no_clock)!=1 else ""} with No Clock-in</strong>
             </div>
-            <table style="width:100%;border-collapse:collapse;">{nc_rows}</table>
+            <table style="width:100%;border-collapse:collapse;">{rows}</table>
           </div>
         </div>"""
 
-    all_clear_section = ""
-    if all_clear:
-        all_clear_section = """
-        <div style="background:#ECFDF5;border:1.5px solid #A7F3D0;border-radius:10px;padding:20px;text-align:center;margin-bottom:24px;">
-          <div style="font-size:20px;margin-bottom:6px;">✓</div>
-          <strong style="color:#059669;font-size:15px;">All VAs submitted their EOD reports on time.</strong>
-        </div>"""
-
-    return f"""
-<!DOCTYPE html>
+    return f"""<!DOCTYPE html>
 <html>
-<body style="margin:0;padding:0;background:#F2F5F9;font-family:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <div style="max-width:620px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(13,31,60,0.10);">
+<body style="margin:0;padding:0;background:#F2F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
 
     <!-- Header -->
-    <div style="background:#0D1F3C;padding:24px 32px;">
-      <div style="font-size:22px;font-weight:800;color:#fff;">Monster Task</div>
-      <div style="font-size:13px;color:#4A6080;margin-top:2px;">VA Admin — Daily EOD Report</div>
+    <div style="background:#0D1F3C;padding:24px 32px;display:flex;align-items:center;gap:16px;">
+      <div>
+        <div style="font-size:20px;font-weight:800;color:#fff;">MT Admin</div>
+        <div style="font-size:12px;color:#4A6080;margin-top:2px;">Daily EOD Report</div>
+      </div>
     </div>
 
     <!-- Date bar -->
@@ -213,23 +240,27 @@ def build_html_email(report: dict) -> str:
     <!-- Body -->
     <div style="padding:28px 32px;">
 
-      <!-- Stats -->
-      <div style="display:flex;gap:12px;margin-bottom:28px;">
-        <div style="flex:1;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:26px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div>
-          <div style="font-size:11px;font-weight:700;color:#6B7280;margin-top:3px;">ACTIVE VAs</div>
+      <!-- Stats — now includes clock-ins -->
+      <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">ACTIVE VAs</div>
         </div>
-        <div style="flex:1;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:26px;font-weight:800;color:#059669;">{report["submitted_count"]}</div>
-          <div style="font-size:11px;font-weight:700;color:#6B7280;margin-top:3px;">SUBMITTED</div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:#0CB8A9;">{report["clocked_in_count"]}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">CLOCKED IN</div>
         </div>
-        <div style="flex:1;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:26px;font-weight:800;color:{"#DC2626" if missing else "#059669"};">{len(missing)}</div>
-          <div style="font-size:11px;font-weight:700;color:#6B7280;margin-top:3px;">MISSING</div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:#059669;">{report["submitted_count"]}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">EOD SUBMITTED</div>
         </div>
-        <div style="flex:1;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:26px;font-weight:800;color:{"#D97706" if late else "#059669"};">{len(late)}</div>
-          <div style="font-size:11px;font-weight:700;color:#6B7280;margin-top:3px;">LATE</div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:{"#DC2626" if missing else "#059669"};">{len(missing)}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">MISSING EOD</div>
+        </div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:{"#D97706" if late else "#059669"};">{len(late)}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">LATE</div>
         </div>
       </div>
 
@@ -243,6 +274,7 @@ def build_html_email(report: dict) -> str:
     <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;">
       <div style="font-size:12px;color:#9CA3AF;">
         This is an automated report from MT Admin. All times are in EST.
+        Attendance matched by last name — format: IN [Last Name], [Date].
       </div>
     </div>
   </div>
@@ -272,15 +304,9 @@ def send_email(subject: str, html_body: str):
 
 @router.post("/send-morning-report")
 def send_morning_report():
-    """
-    Sends the morning EOD digest for the previous day.
-    Called automatically by APScheduler every morning,
-    and can also be triggered manually from the app.
-    """
     try:
-        est      = timezone(timedelta(hours=-5))
-        yesterday = (datetime.now(est) - timedelta(days=1)).strftime("%Y-%m-%d")
-        report   = build_missing_report(yesterday)
+        yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        report    = build_missing_report(yesterday)
 
         total_issues = len(report["missing"]) + len(report["late"]) + len(report["no_clock_in"])
         subject = (
@@ -288,19 +314,16 @@ def send_morning_report():
             if total_issues == 0 else
             f"[MT Admin] {total_issues} Issue{'s' if total_issues!=1 else ''} — EOD Report {yesterday}"
         )
-
-        html = build_html_email(report)
-        send_email(subject, html)
-
+        send_email(subject, build_html_email(report))
         return {
             "sent":      True,
             "date":      yesterday,
             "recipients": get_email_config()["recipients"],
             "summary": {
-                "missing":    len(report["missing"]),
-                "late":       len(report["late"]),
-                "no_clock_in":len(report["no_clock_in"]),
-            }
+                "missing":     len(report["missing"]),
+                "late":        len(report["late"]),
+                "no_clock_in": len(report["no_clock_in"]),
+            },
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -308,10 +331,6 @@ def send_morning_report():
 
 @router.post("/send-report/{date}")
 def send_report_for_date(date: str):
-    """
-    Manually send the EOD report for a specific date (YYYY-MM-DD).
-    Useful for resending or testing.
-    """
     try:
         report  = build_missing_report(date)
         total   = len(report["missing"]) + len(report["late"])

@@ -6,7 +6,8 @@ import Button                           from "../ui/Button";
 import { Card, ControlBar, PageHeader, TabBar } from "../ui/Structure";
 import { Select }                              from "../ui/Inputs";
 import { Avatar, CommunityBadge, StatusBox }   from "../ui/Indicators";
-import { ths, tds, tableWrap }          from "../ui/Tables";
+import { ths, tds, tableWrap }          from "../ui/Table";
+import { cacheGet, cacheSet } from "../../utils/reportCache";
 
 const DAYS     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
@@ -45,16 +46,19 @@ const STATUS_CONFIG = {
 };
 
 // ── Root ──────────────────────────────────────────────────────────
+const CACHE_KEY = "schedule:vas";
+
 export default function Schedule() {
   const [activeTab, setActiveTab] = useState("main");
-  const [vas,       setVAs]       = useState([]);
-  const [loading,   setLoading]   = useState(true);
+  const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
+  const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
 
   useEffect(() => {
+    if (cacheGet(CACHE_KEY)) return;   // already cached — skip fetch
     apiFetch("/api/schedule")
-      .then((d) => setVAs(d.vas ?? []))
-      .catch((e) => setError(e.message))
+      .then(d => { const list = d.vas ?? []; cacheSet(CACHE_KEY, list); setVAs(list); })
+      .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 

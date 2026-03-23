@@ -1,26 +1,22 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
-  LayoutDashboard, ClipboardList, UserSearch,
+  LayoutDashboard, ClipboardList, Users,
   CalendarDays, BarChart3, ShieldAlert, ChevronRight, LogOut, ScrollText, FileSpreadsheet,
 } from "lucide-react";
 import { signOut } from "firebase/auth";
 import { auth }   from "../../firebase";
 import { colors, font, radius } from "../../styles/tokens";
-import Dashboard    from "../admin/Dashboard";
-import VAReports    from "../admin/VaReports";
-import VAInspector  from "../admin/VaInspector";
-import Schedule     from "../admin/Schedule";
-import ActivityLogs from "../admin/ActivityLogs";
-import EowReports   from "../admin/EowReports";
-import { SoonBadge } from "../ui/Indicators";
+import Dashboard          from "../admin/Dashboard";
+import VirtualAssistants  from "../admin/VirtualAssistants";
+import Schedule           from "../admin/Schedule";
+import ActivityLogs       from "../admin/ActivityLogs";
+import { SoonBadge }      from "../ui/Indicators";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
 
 const NAV = [
   { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",      sub: "Overview",         component: Dashboard    },
-  { id: "va_reports",   icon: ClipboardList,   label: "VA Reports",     sub: "EOD & Attendance", component: VAReports    },
-  { id: "va_inspector", icon: UserSearch,      label: "VA Inspector",   sub: "Per-VA history",   component: VAInspector  },
+  { id: "virtual_assistants",   icon: ClipboardList,   label: "Virtual Assistants",     sub: "EOD & Attendance", component: VirtualAssistants    },
   { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
-  { id: "eow_reports",  icon: FileSpreadsheet, label: "EOW Reports",    sub: "End-of-week summaries", component: EowReports },
   { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
 ];
 
@@ -32,6 +28,12 @@ const NAV_SOON = [
 export default function Layout({ user }) {
   const [activeTab, setActiveTab] = useState("dashboard");
   const ActivePage = NAV.find((n) => n.id === activeTab)?.component ?? Dashboard;
+
+  // Update browser tab title when nav changes
+  useEffect(() => {
+    const current = NAV.find(n => n.id === activeTab);
+    document.title = current ? `${current.label} · MT Admin` : "MT Admin";
+  }, [activeTab]);
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: font.family, background: colors.bg }}>

@@ -214,15 +214,17 @@ def get_active_vas() -> list[dict]:
         if any(t in EXCLUDED_TEAMS for t in teams):            continue
 
         vas.append({
-            "id":           p["id"],
-            "name":         name,
-            "community":    get_prop(p, "Community "),   # trailing space intentional
-            "email":        get_prop(p, "MT Email Address"),
-            "schedule":     get_prop(p, "Schedule"),       # "Mon - Fri" / "Mon - Sun" / "Flexible"
-            "shift_time":   get_prop(p, "Shift Time"),     # freeform EST text
+            "id":             p["id"],
+            "name":           name,
+            "community":      get_prop(p, "Community "),
+            "email":          get_prop(p, "MT Email Address"),
+            "phone":          get_prop(p, "Phone"),
+            "start_date":     get_prop(p, "Start Date"),
+            "schedule":       get_prop(p, "Schedule"),
+            "shift_time":     get_prop(p, "Shift Time"),
             "schedule_notes": get_prop(p, "Schedule Notes"),
-            "contract_ids": get_prop(p, "Contracts"),
-            "status":       status,
+            "contract_ids":   get_prop(p, "Contracts"),
+            "status":         status,
         })
 
     return sorted(vas, key=lambda v: v["name"])
