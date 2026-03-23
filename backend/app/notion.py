@@ -164,6 +164,31 @@ def clock_in_punctuality(created_at: str, time_in_str: str) -> dict:
         "minutes_late":   minutes_late if not on_time else 0,
     }
 
+# ── Schedule helpers ──────────────────────────────────────────────
+# Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6  (Python weekday)
+
+_SCHEDULE_WORKDAYS: dict[str, set[int]] = {
+    "Mon - Fri": {0, 1, 2, 3, 4},
+    "Mon - Sun": {0, 1, 2, 3, 4, 5},   # Mon–Sat; Sun always excluded
+    "Flexible":  {0, 1, 2, 3, 4, 5},   # treat as Mon–Sat
+}
+
+def va_works_on_date(va: dict, date_str: str) -> bool:
+    """
+    Returns True if this VA is expected to work on the given date.
+
+    Uses the VA's 'schedule' property:
+      'Mon - Fri'  → Mon through Fri only
+      'Mon - Sun'  → Mon through Sat  (Sunday is never a workday)
+      'Flexible'   → Mon through Sat
+      anything else → defaults to Mon–Fri
+
+    This prevents Mon-Fri VAs from being flagged as missing on Saturdays.
+    """
+    weekday  = datetime.strptime(date_str, "%Y-%m-%d").weekday()
+    schedule = va.get("schedule", "Mon - Fri")
+    workdays = _SCHEDULE_WORKDAYS.get(schedule, {0, 1, 2, 3, 4})
+    return weekday in workdays
 
 # ── VA Database ───────────────────────────────────────────────────
 
@@ -232,7 +257,45 @@ def get_active_vas() -> list[dict]:
 
 # ── Contracts ─────────────────────────────────────────────────────
 
+def get_all_active_contracts_by_va_id() -> dict[str, list[dict]]:
+    """
+    Query ALL active contracts from the Contracts DB in one shot and
+    return them grouped by VA page ID.
+
+    This replaces the old per-VA approach (get_active_contracts_for_va)
+    which relied on reading the relation FROM the VA page. That relation
+    is defined on the Contracts side → VA, so the VA page never returned
+    contract IDs, causing every CBA VA to appear as "No clients".
+
+    ⚠️  The property that links a contract to a VA is named "VA" here.
+        If your Contracts DB uses a different property name (e.g. "VAs"
+        or "Virtual Assistant"), update the get_prop call below.
+    """
+    pages = query_all(DB["contracts"], {
+        "property": "Contract Status",
+        "select":   {"equals": "Active"},
+    })
+
+    result: dict[str, list[dict]] = {}
+    for page in pages:
+        va_ids      = get_prop(page, "VA")           # relation → list of VA page IDs
+        client_name = get_prop(page, "Client ").strip()
+        contract    = {
+            "contract_id":   page["id"],
+            "client_name":   client_name,
+            "contract_name": get_prop(page, "Contract Name"),
+        }
+        for va_id in va_ids:
+            result.setdefault(va_id, []).append(contract)
+
+    return result
+
+
 def get_active_contracts_for_va(contract_ids: list[str]) -> list[dict]:
+    """
+    Legacy per-VA lookup kept for any callers that still pass explicit
+    contract_ids. Prefer get_all_active_contracts_by_va_id() for bulk use.
+    """
     if not contract_ids:
         return []
     contracts = []

@@ -4,15 +4,15 @@ import { Search, ChevronDown, ChevronUp,
          Copy, Users, RefreshCw }            from "lucide-react";
 import { colors, font, radius, shadow }      from "../../styles/tokens";
 import { apiFetch }                          from "../../api";
-import { cacheSet, cacheGet, cacheTimeLeft } from "../../utils/reportCache";
+import { cacheSet, cacheGet, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import Button                                from "../ui/Button";
 import { Card, PageHeader, StatRow, TabBar } from "../ui/Structure";
 import { StatCard, StatusBadge, CommunityBadge, StatusBox, Avatar } from "../ui/Indicators";
 import { Select }                            from "../ui/Inputs";
 import { logActivity, LOG_TYPES }            from "../../utils/logger";
 
-const CACHE_ALL = "eow:all";
-const CACHE_VA  = "eow:va";
+const CACHE_ALL = CACHE_KEYS.EOW_ALL;
+const CACHE_VA  = CACHE_KEYS.EOW_VA;
 
 // ── Helpers ───────────────────────────────────────────────────────
 function getWeekRange() {
@@ -319,15 +319,25 @@ function ByVATab() {
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState("");
 
-  // Build VA options from the all-report cache if available (saves an API call)
-  const allCache   = cacheGet(CACHE_ALL);
-  const vaOptions  = allCache
+const allCache = cacheGet(CACHE_ALL);
+const vaList   = cacheGet(CACHE_KEYS.VA_LIST); 
+
+const vaOptions = (() => {
+  const source = vaList
+    ? ["Main", "CBA"].flatMap(comm => {
+        const group = vaList.filter(v => v.community === comm);
+        if (!group.length) return [];
+        return [{ label: `${comm} Community`, options: group.map(v => ({ value: v.name, label: v.name })) }];
+      })
+    : allCache
     ? ["Main", "CBA"].flatMap(comm => {
         const group = allCache.va_summaries.filter(s => s.community === comm);
         if (!group.length) return [];
         return [{ label: `${comm} Community`, options: group.map(s => ({ value: s.va.name, label: s.va.name })) }];
       })
     : [];
+  return source;
+})();
 
   // If all-report cache has data for this VA, use it directly
   function findInCache(name) {

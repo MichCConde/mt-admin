@@ -1,20 +1,40 @@
-# ════════════════════════════════════════════════════════════════
-# backend/app/routers/inspector.py
-# ════════════════════════════════════════════════════════════════
 from fastapi import APIRouter, Query, HTTPException
-from app.notion import get_active_vas, get_eod_for_va, get_attendance_for_date
+from app.notion import (
+    get_active_vas, get_eod_for_va, get_attendance_for_date,
+    get_all_active_contracts_by_va_id,
+)
 from datetime import date as date_type
 import calendar
 
 router = APIRouter()
 
+
 @router.get("/vas")
 def list_vas():
-    """Return all active VA Team VAs for the dropdown."""
+    """
+    Return all active VA Team VAs for the VA list and dropdowns.
+    contract_ids is enriched from the Contracts DB (queried from that side)
+    so the frontend badge shows the correct client count.
+    """
     try:
-        return {"vas": get_active_vas()}
+        vas             = get_active_vas()
+        contracts_by_va = get_all_active_contracts_by_va_id()
+
+        enriched = []
+        for va in vas:
+            active_contracts = contracts_by_va.get(va["id"], [])
+            enriched.append({
+                **va,
+                # Override contract_ids with the IDs we actually found
+                # so VAListRow can use .length for the badge count
+                "contract_ids": [c["contract_id"] for c in active_contracts],
+                "contracts":    active_contracts,   # full data for any downstream use
+            })
+
+        return {"vas": enriched}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("")
 def inspect_va(
@@ -27,7 +47,6 @@ def inspect_va(
     plus a missing-day analysis comparing against days they clocked in.
     """
     try:
-        # Validate VA is still active + VA Team
         vas = get_active_vas()
         va  = next((v for v in vas if v["name"].strip().lower() == va_name.strip().lower()), None)
         if not va:
@@ -36,17 +55,13 @@ def inspect_va(
         community = va.get("community", "Main")
         reports   = get_eod_for_va(va_name, community, year, month)
 
-        # Build a set of dates that have at least one submission
         submitted_dates = {r["date"] for r in reports}
 
-        # Gather attendance for every working day in the month to find missing days
-        # We check each day the VA clocked in — if no EOD that day, flag it
         days_in_month = calendar.monthrange(year, month)[1]
         missing_days  = []
 
         for day in range(1, days_in_month + 1):
-            date_str  = f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}"
-            # Skip future dates
+            date_str = f"{year}-{str(month).zfill(2)}-{str(day).zfill(2)}"
             if date_type(year, month, day) > date_type.today():
                 continue
             attendance = get_attendance_for_date(date_str)
@@ -58,19 +73,18 @@ def inspect_va(
             if clocked_in and date_str not in submitted_dates:
                 missing_days.append(date_str)
 
-        # Summary metrics
         on_time_count = sum(1 for r in reports if r.get("punctuality", {}).get("on_time"))
         late_count    = len(reports) - on_time_count
 
         return {
-            "va":             va,
-            "year":           year,
-            "month":          month,
-            "reports":        reports,
+            "va":              va,
+            "year":            year,
+            "month":           month,
+            "reports":         reports,
             "submitted_count": len(reports),
-            "missing_days":   missing_days,
-            "on_time_count":  on_time_count,
-            "late_count":     late_count,
+            "missing_days":    missing_days,
+            "on_time_count":   on_time_count,
+            "late_count":      late_count,
         }
     except HTTPException:
         raise

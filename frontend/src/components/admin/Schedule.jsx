@@ -1,6 +1,6 @@
 import { useState, useEffect }   from "react";
 import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, RefreshCw } from "lucide-react";
-import { cacheGet, cacheSet, cacheClear, cacheTimeLeft } from "../../utils/reportCache";
+import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
 import Button                           from "../ui/Button";
@@ -64,7 +64,7 @@ function CachedBanner({ cacheKey, onRefresh, loading }) {
   );
 }
 // ── Root ──────────────────────────────────────────────────────────
-const CACHE_KEY = "schedule:vas";
+const CACHE_KEY = CACHE_KEYS.SCHEDULE;
 
 export default function Schedule() {
   const [activeTab, setActiveTab] = useState("main");

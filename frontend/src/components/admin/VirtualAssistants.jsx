@@ -6,14 +6,14 @@ import {
 } from "lucide-react";
 import { colors, font, radius, shadow }         from "../../styles/tokens";
 import { apiFetch }                             from "../../api";
-import { cacheGet, cacheSet, cacheClear, cacheTimeLeft } from "../../utils/reportCache";
+import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { Card, PageHeader, TabBar, SectionLabel, StatRow } from "../ui/Structure";
 import { Avatar, CommunityBadge, StatCard, StatusBadge, StatusBox, Tag } from "../ui/Indicators";
 import { Select, NumberInput }                  from "../ui/Inputs";
 import Button                                   from "../ui/Button";
 import { logActivity, LOG_TYPES }               from "../../utils/logger";
 
-const CACHE_KEY = "va:list";
+const CACHE_KEY = CACHE_KEYS.VA_LIST;
 
 // ── Constants ─────────────────────────────────────────────────────
 const MONTHS = ["January","February","March","April","May","June",

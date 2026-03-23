@@ -4,7 +4,7 @@ import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
 import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
 import { Card, PageHeader, StatRow } from "../ui/Structure";
-import { cacheGet, cacheSet, cacheClear, cacheTimeLeft } from "../../utils/reportCache";
+import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import Button from "../ui/Button";
 
 // ── Bar chart used in CBA distribution ───────────────────────────
@@ -84,7 +84,7 @@ function CachedBanner({ cacheKey, onRefresh, loading }) {
 }
 
 // ── Root ──────────────────────────────────────────────────────────
-const CACHE_KEY = "dashboard:summary";
+const CACHE_KEY = CACHE_KEYS.DASHBOARD;
 
 export default function Dashboard() {
   const [data,    setData]    = useState(() => cacheGet(CACHE_KEY));
