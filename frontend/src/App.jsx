@@ -1,12 +1,13 @@
-import { useAuth }  from "./hooks/useAuth";
-import Layout        from "./components/pages/Layout";
-import Login         from "./components/pages/Login";
-import { colors, font } from "./styles/tokens";
+import { useAuth }       from "./hooks/useAuth";
+import Layout             from "./components/pages/Layout";
+import Login              from "./components/pages/Login";
+import ErrorBoundary      from "./components/ui/ErrorBoundary";
+import { colors, font }   from "./styles/tokens";
 
 export default function App() {
-  const { user, staff, loading, denied, authError  } = useAuth();
+  const { user, staff, loading, denied, authError } = useAuth();
 
-  // ── 1. Still checking auth + Firestore ──────────────────────────
+  // ── 1. Still checking auth + Firestore ───────────────────────────
   if (loading) {
     return (
       <div style={{
@@ -27,7 +28,7 @@ export default function App() {
     );
   }
 
-  // ── 2. Logged into Firebase but NOT in staff collection ──────────
+  // ── 2. Logged in but not in staff collection ──────────────────────
   if (denied) {
     return (
       <div style={{
@@ -49,10 +50,6 @@ export default function App() {
             Access Denied
           </div>
           <div style={{ fontSize: font.base, color: colors.textBody, lineHeight: 1.6 }}>
-            Your account is not registered as MT Staff.
-            Please contact your administrator.
-          </div>
-          <div>
             {authError || "Your account is not registered as MT Staff. Please contact your administrator."}
           </div>
         </div>
@@ -60,11 +57,13 @@ export default function App() {
     );
   }
 
-  // ── 3. Not logged in → show Login ────────────────────────────────
+  // ── 3. Not logged in → show Login ─────────────────────────────────
   if (!user) return <Login />;
 
-  // ── 4. Logged in + in staff collection → show app ────────────────
-  // At this point auth.currentUser is guaranteed to be set,
-  // so apiFetch() will always have a token available.
-  return <Layout user={user} staff={staff} />;
+  // ── 4. Logged in + staff → show app, wrapped in app-level boundary ─
+  return (
+    <ErrorBoundary level="app">
+      <Layout user={user} staff={staff} />
+    </ErrorBoundary>
+  );
 }

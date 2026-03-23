@@ -16,6 +16,8 @@ import { logActivity, LOG_TYPES } from "../../utils/logger";
 
 import { wakeBackend } from "../../api";
 
+import ErrorBoundary from "../ui/ErrorBoundary";
+
 
 const NAV = [
   { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",      sub: "Overview",         component: Dashboard    },
@@ -205,7 +207,9 @@ export default function Layout({ user }) {
 
         {/* Page content */}
         <main style={{ flex: 1, overflowY: "auto", padding: "32px 40px", width: "100%", boxSizing: "border-box" }}>
-          <ActivePage setActiveTab={setActiveTab} />
+          <ErrorBoundary level="page" pageName={NAV.find(n => n.id === activeTab)?.label}>
+            <ActivePage setActiveTab={setActiveTab} />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
