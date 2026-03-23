@@ -17,6 +17,7 @@ import { logActivity, LOG_TYPES } from "../../utils/logger";
 import { wakeBackend } from "../../api";
 
 import ErrorBoundary from "../ui/ErrorBoundary";
+import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/reportCache";
 
 
 const NAV = [
@@ -44,6 +45,25 @@ export default function Layout({ user }) {
 
   useEffect(() => {
     wakeBackend(); // ping /health on app load so backend is warm before first real fetch
+  }, []);
+
+  useEffect(() => {
+  // Small delay so the Dashboard's own fetch gets priority on the
+  // auth token and backend cold-start, not these background calls.
+  const t = setTimeout(() => {
+    if (!cacheGet(CACHE_KEYS.VA_LIST)) {
+      apiFetch("/api/inspector/vas")
+        .then(d => cacheSet(CACHE_KEYS.VA_LIST, d.vas ?? []))
+        .catch(() => {}); // silent — prefetch failures are non-critical
+    }
+    if (!cacheGet(CACHE_KEYS.SCHEDULE)) {
+      apiFetch("/api/schedule")
+        .then(d => cacheSet(CACHE_KEYS.SCHEDULE, d.vas ?? []))
+        .catch(() => {});
+    }
+  }, 2000); // 2 s after mount
+
+    return () => clearTimeout(t);
   }, []);
 
   return (
@@ -156,6 +176,7 @@ export default function Layout({ user }) {
           <button
             onClick={async () => {
               await logActivity(LOG_TYPES.SIGN_OUT, `${user?.email} signed out`);
+              cacheClearAll();
               signOut(auth);
             }}
             style={{
