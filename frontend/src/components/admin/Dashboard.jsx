@@ -1,10 +1,11 @@
 import { useEffect, useState }  from "react";
-import { Users, AlertTriangle, Flag, UserCheck, UserX } from "lucide-react";
-import { colors, font, radius, shadow } from "../../styles/tokens";
+import { Users, UserCheck, UserX, RefreshCw } from "lucide-react";
+import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
 import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
-import { Card, SectionLabel, PageHeader, StatRow } from "../ui/Structure";
-import { cacheGet, cacheSet } from "../../utils/reportCache";
+import { Card, PageHeader, StatRow } from "../ui/Structure";
+import { cacheGet, cacheSet, cacheClear, cacheTimeLeft } from "../../utils/reportCache";
+import Button from "../ui/Button";
 
 // ── Bar chart used in CBA distribution ───────────────────────────
 function BarChart({ items, max }) {
@@ -16,40 +17,24 @@ function BarChart({ items, max }) {
         return (
           <div key={i}>
             <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.textBody }}>
-                {item.label}
-              </span>
-              <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>
-                {item.count}
-              </span>
+              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.textBody }}>{item.label}</span>
+              <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>{item.count}</span>
             </div>
-            <div style={{
-              width: "100%", height: 8,
-              background: colors.bg,
-              borderRadius: 99,
-              overflow: "hidden",
-            }}>
+            <div style={{ width: "100%", height: 8, background: colors.bg, borderRadius: 99, overflow: "hidden" }}>
               <div style={{
-                width:        `${pct}%`,
-                height:       "100%",
-                background:   BAR_COLORS[i % BAR_COLORS.length],
-                borderRadius: 99,
-                transition:   "width .5s ease",
+                width: `${pct}%`, height: "100%",
+                background: BAR_COLORS[i % BAR_COLORS.length],
+                borderRadius: 99, transition: "width .5s ease",
               }} />
             </div>
             {item.vas?.length > 0 && (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
                 {item.vas.map((name, j) => (
                   <span key={j} style={{
-                    fontSize:     font.xs,
-                    color:        colors.textMuted,
-                    background:   colors.surfaceAlt,
-                    border:       `1px solid ${colors.border}`,
-                    borderRadius: radius.sm,
-                    padding:      "2px 8px",
-                  }}>
-                    {name}
-                  </span>
+                    fontSize: font.xs, color: colors.textMuted,
+                    background: colors.surfaceAlt, border: `1px solid ${colors.border}`,
+                    borderRadius: radius.sm, padding: "2px 8px",
+                  }}>{name}</span>
                 ))}
               </div>
             )}
@@ -64,11 +49,9 @@ function BarChart({ items, max }) {
 function VARow({ va, badge, i }) {
   return (
     <div style={{
-      display:    "flex",
-      alignItems: "center",
-      gap:        12,
-      padding:    "10px 20px",
-      borderTop:  i > 0 ? `1px solid ${colors.border}` : "none",
+      display: "flex", alignItems: "center", gap: 12,
+      padding: "10px 20px",
+      borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
       background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
     }}>
       <CommunityBadge community={va.community} />
@@ -76,6 +59,26 @@ function VARow({ va, badge, i }) {
         {va.name}
       </span>
       {badge}
+    </div>
+  );
+}
+
+// ── Cached data banner ────────────────────────────────────────────
+function CachedBanner({ cacheKey, onRefresh, loading }) {
+  const mins = cacheTimeLeft(cacheKey);
+  if (!mins) return null;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
+      borderRadius: radius.md, padding: "8px 14px",
+    }}>
+      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
+        Showing cached data · expires in {mins} min
+      </span>
+      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
+        Refresh
+      </Button>
     </div>
   );
 }
@@ -96,7 +99,16 @@ export default function Dashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const fmtDate = (iso) => iso
+  function refresh() {
+    cacheClear(CACHE_KEY);
+    setLoading(true); setError(""); setData(null);
+    apiFetch("/api/dashboard")
+      .then(d => { cacheSet(CACHE_KEY, d); setData(d); })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  const fmtDate = iso => iso
     ? new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
         weekday: "long", month: "long", day: "numeric",
       })
@@ -122,8 +134,10 @@ export default function Dashboard() {
     );
   }
 
+  if (!data) return null;
+
   const { va_counts, cba_distribution, missing } = data;
-  const maxCBA = Math.max(...cba_distribution.map((d) => d.count), 1);
+  const maxCBA = Math.max(...cba_distribution.map(d => d.count), 1);
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 28 }}>
@@ -131,6 +145,8 @@ export default function Dashboard() {
         title="Dashboard"
         subtitle="Live overview of your VA team and today's report status."
       />
+
+      <CachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />
 
       {/* ── Row 1: VA Count stat cards ─────────────────────────── */}
       <StatRow>
@@ -153,7 +169,6 @@ export default function Dashboard() {
           <BarChart items={cba_distribution} max={maxCBA} />
         </Card>
 
-        {/* Missing Reports Yesterday */}
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
           {/* Flagged (2+ consecutive days) */}
@@ -168,8 +183,7 @@ export default function Dashboard() {
               </div>
             ) : (
               missing.flagged_vas.map((va, i) => (
-                <VARow
-                  key={i} va={va} i={i}
+                <VARow key={i} va={va} i={i}
                   badge={<StatusBadge variant="danger">Flagged</StatusBadge>}
                 />
               ))
@@ -191,7 +205,7 @@ export default function Dashboard() {
                 <VARow
                   key={i} va={va} i={i}
                   badge={
-                    missing.flagged_vas.some((f) => f.name === va.name)
+                    missing.flagged_vas.some(f => f.name === va.name)
                       ? <StatusBadge variant="danger">Flagged</StatusBadge>
                       : <StatusBadge variant="warning">1 day</StatusBadge>
                   }

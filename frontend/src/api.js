@@ -37,3 +37,16 @@ export async function apiFetch(path, options = {}) {
 
   return res.json();
 }
+
+/**
+ * Fire-and-forget ping to the /health endpoint.
+ *
+ * UptimeRobot already keeps the backend warm every 5 min, but this gives
+ * an extra warm-up kick the moment the user opens the app — so the first
+ * real API call never hits a cold-start delay.
+ *
+ * Called once from Layout on mount. No auth needed (/health is public).
+ */
+export function wakeBackend() {
+  fetch(`${BASE}/health`).catch(() => {});
+}

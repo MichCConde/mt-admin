@@ -42,6 +42,7 @@ def root():
     return {"name": "MT Admin API", "status": "ok", "docs": "/docs"}
 
 @app.get("/health")
+@app.head("/health")
 def health():
     return {"status": "ok"}
 

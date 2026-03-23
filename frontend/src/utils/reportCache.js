@@ -1,5 +1,16 @@
 const TTL_MS = 45 * 60 * 1000; // 45 minutes
 
+// ── Centralised key registry ──────────────────────────────────────
+// Import CACHE_KEYS in any component instead of hard-coding strings.
+export const CACHE_KEYS = {
+  DASHBOARD : "dashboard:summary",
+  SCHEDULE  : "schedule:vas",
+  VA_LIST   : "va:list",
+  EOW_ALL   : "eow:all",
+  EOW_VA    : "eow:va",
+};
+
+// ── Core helpers ──────────────────────────────────────────────────
 export function cacheSet(key, data) {
   try {
     sessionStorage.setItem(key, JSON.stringify({
@@ -31,7 +42,12 @@ export function cacheClear(key) {
   try { sessionStorage.removeItem(key); } catch {}
 }
 
-/** Returns how many minutes are left before a cached item expires. */
+/** Wipe every known cache entry at once (e.g. on sign-out or manual purge). */
+export function cacheClearAll() {
+  Object.values(CACHE_KEYS).forEach(cacheClear);
+}
+
+/** Returns how many minutes are left before a cached item expires (0 = not cached). */
 export function cacheTimeLeft(key) {
   try {
     const raw = sessionStorage.getItem(key);

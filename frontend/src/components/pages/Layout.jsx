@@ -9,14 +9,19 @@ import { colors, font, radius } from "../../styles/tokens";
 import Dashboard          from "../admin/Dashboard";
 import VirtualAssistants  from "../admin/VirtualAssistants";
 import Schedule           from "../admin/Schedule";
+import EowReports           from "../admin/EowReports";
 import ActivityLogs       from "../admin/ActivityLogs";
 import { SoonBadge }      from "../ui/Indicators";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
+
+import { wakeBackend } from "../../api";
+
 
 const NAV = [
   { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",      sub: "Overview",         component: Dashboard    },
   { id: "virtual_assistants",   icon: ClipboardList,   label: "Virtual Assistants",     sub: "EOD & Attendance", component: VirtualAssistants    },
   { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
+  { id: "eow_reports",  icon: FileSpreadsheet, label: "EOW Reports",    sub: "End-of-week reports", component: EowReports },
   { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
 ];
 
@@ -34,6 +39,10 @@ export default function Layout({ user }) {
     const current = NAV.find(n => n.id === activeTab);
     document.title = current ? `${current.label} · MT Admin` : "MT Admin";
   }, [activeTab]);
+
+  useEffect(() => {
+    wakeBackend(); // ping /health on app load so backend is warm before first real fetch
+  }, []);
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: font.family, background: colors.bg }}>
