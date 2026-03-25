@@ -13,4 +13,5 @@ export default function VAList({ vas, loading, filter = "" }) {
       {filtered.map(v => <VACard key={v.id} va={v} />)}
     </div>
   );
-}
+} 
+export default VAList;
