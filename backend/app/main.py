@@ -1,58 +1,73 @@
-from fastapi import FastAPI, Depends
+import logging
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import attendance, eod, inspector, schedule, email as email_router, dashboard, eow
-from app.middleware.auth import verify_token
+from app.notion.client import get_database_meta
 
-# ── App ───────────────────────────────────────────────────────────
-app = FastAPI(
-    title="MT Admin API",
-    redirect_slashes=False,
-)
+# ── Routers ───────────────────────────────────────────────────────────────────
+from app.routers.va.eod        import router as va_eod_router
+from app.routers.va.attendance import router as va_att_router
+from app.routers.va.inspector  import router as va_ins_router
+from app.routers.va.schedule   import router as va_sched_router
+
+from app.routers.internal.dashboard import router as dash_router
+from app.routers.internal.eow       import router as eow_router
+from app.routers.internal.activity  import router as activity_router
+from app.routers.internal.sync      import router as sync_router
+
+from app.routers.email.daily  import router as email_daily_router
+from app.routers.email.eow    import router as email_eow_router
+from app.routers.email.alerts import router as email_alerts_router
+
+# ── App setup ─────────────────────────────────────────────────────────────────
+logging.basicConfig(level=logging.INFO)
+
+app = FastAPI(title="Monster Task API", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=list(filter(None, [
-        "http://localhost:5173",
-        settings.frontend_url,
-    ])),
+    allow_origins=["*"],   # tighten to your frontend domain in production
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ── Protected routes ──────────────────────────────────────────────
-PROTECTED = {"dependencies": [Depends(verify_token)]}
+# ── Register routers ──────────────────────────────────────────────────────────
+app.include_router(va_eod_router)
+app.include_router(va_att_router)
+app.include_router(va_ins_router)
+app.include_router(va_sched_router)
 
-app.include_router(attendance.router,   prefix="/api/attendance", tags=["Attendance"], **PROTECTED)
-app.include_router(eod.router,          prefix="/api/eod",        tags=["EOD"],        **PROTECTED)
-app.include_router(eow.router,          prefix="/api/eow",        tags=["EOW"],        **PROTECTED)
-app.include_router(inspector.router,    prefix="/api/inspector",  tags=["Inspector"],  **PROTECTED)
-app.include_router(schedule.router,     prefix="/api/schedule",   tags=["Schedule"],   **PROTECTED)
-app.include_router(email_router.router, prefix="/api/email",      tags=["Email"],      **PROTECTED)
-app.include_router(dashboard.router,    prefix="/api/dashboard",  tags=["Dashboard"],  **PROTECTED)
+app.include_router(dash_router)
+app.include_router(eow_router)
+app.include_router(activity_router)
+app.include_router(sync_router)
 
-# ── Health check (no auth) ────────────────────────────────────────
-@app.get("/")
-def root():
-    return {"name": "MT Admin API", "status": "ok", "docs": "/docs"}
+app.include_router(email_daily_router)
+app.include_router(email_eow_router)
+app.include_router(email_alerts_router)
 
+
+# ── Health check ──────────────────────────────────────────────────────────────
 @app.get("/health")
-@app.head("/health")
-def health():
-    return {"status": "ok"}
-
-# ── Cron endpoint for morning email report ────────────────────────
-@app.post("/cron/morning-report")
-def cron_morning_report(x_cron_secret: str = None):
-    from fastapi import HTTPException
-    if not settings.cron_secret or x_cron_secret != settings.cron_secret:
-        raise HTTPException(status_code=401, detail="Unauthorized")
-
-    from app.routers.email import send_morning_report
+async def health():
+    """Verifies Notion connectivity — used by UptimeRobot."""
     try:
-        result = send_morning_report()
-        return {"status": "sent", "result": result}
+        get_database_meta(settings.notion_va_db_id)
+        return {"status": "ok", "notion": "reachable"}
     except Exception as e:
-        return {"status": "error", "detail": str(e)}
+        return {"status": "degraded", "notion": str(e)}
+
+
+# ── Cron endpoints ────────────────────────────────────────────────────────────
+@app.post("/cron/sync")
+async def cron_sync(x_cron_secret: str = Header(None)):
+    from app.routers.internal.sync import cron_sync as _sync
+    return await _sync(x_cron_secret=x_cron_secret)
+
+
+@app.post("/cron/eow-email")
+async def cron_eow(x_cron_secret: str = Header(None)):
+    from app.routers.email.eow import cron_eow as _eow
+    return await _eow(x_cron_secret=x_cron_secret)
