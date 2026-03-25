@@ -1,4 +1,5 @@
-// Spinner
+import { timeAgoLabel } from "../utils/dates";
+
 export function Spinner({ fullPage = false }) {
   return (
     <div className={`spinner-wrap ${fullPage ? "full" : ""}`}>
@@ -11,9 +12,7 @@ export function Spinner({ fullPage = false }) {
   );
 }
 
-// Banners
 export function CachedBanner({ cachedAt, expiresInMin, onRefresh, refreshing }) {
-  const { timeAgoLabel } = require("../utils/dates");
   if (!cachedAt) return null;
   return (
     <div className="banner-cached">
@@ -21,7 +20,7 @@ export function CachedBanner({ cachedAt, expiresInMin, onRefresh, refreshing }) 
         Showing cached data
         {expiresInMin != null
           ? ` · expires in ${expiresInMin} min`
-          : cachedAt ? ` · ${timeAgoLabel(cachedAt)}` : ""}
+          : ` · ${timeAgoLabel(cachedAt)}`}
       </span>
       <button className="btn-refresh" onClick={onRefresh} disabled={refreshing}>
         {refreshing ? "Refreshing…" : "↻ Refresh"}
@@ -40,7 +39,6 @@ export function SuccessBanner({ message }) {
   return <div className="banner-success">✓ {message}</div>;
 }
 
-// Badges
 export function Badge({ type = "default", children }) {
   return <span className={`badge badge-${type}`}>{children}</span>;
 }
