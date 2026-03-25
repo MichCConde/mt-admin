@@ -1,36 +1,29 @@
 from fastapi import APIRouter, Depends, Query, HTTPException
 from app.middleware.auth import verify_token
 from app.firebase import get_db
-from app.notion import get_all_schedules
+from app.notion.vas import get_active_vas
+from app.notion.schedules import build_schedules_from_vas
 import logging
 
 router = APIRouter(prefix="/api/va/schedule", tags=["va-schedule"])
 log    = logging.getLogger(__name__)
 
 
-def _get_schedules_from_mirror() -> list[dict]:
+def _get_schedules() -> list[dict]:
+    """
+    Build schedule from VA mirror in Firestore (fast),
+    falling back to live Notion fetch if mirror is empty.
+    """
     db   = get_db()
-    docs = list(db.collection("schedule_mirror").stream())
-    if docs:
-        return [d.to_dict() for d in docs]
-    schedules = get_all_schedules()
-    _seed_mirror(schedules)
-    return schedules
-
-
-def _seed_mirror(schedules: list[dict]):
-    db    = get_db()
-    batch = db.batch()
-    for s in schedules:
-        ref = db.collection("schedule_mirror").document(s["id"])
-        batch.set(ref, s)
-    batch.commit()
+    docs = list(db.collection("va_mirror").stream())
+    vas  = [d.to_dict() for d in docs] if docs else get_active_vas()
+    return build_schedules_from_vas(vas)
 
 
 @router.get("")
 async def list_schedules(user=Depends(verify_token)):
     try:
-        return {"schedules": _get_schedules_from_mirror()}
+        return {"schedules": _get_schedules()}
     except Exception as e:
         log.exception("Error fetching schedules")
         raise HTTPException(status_code=500, detail=str(e))
@@ -42,18 +35,55 @@ async def find_available(
     time: str = Query(..., description="HH:MM in 24h format"),
     user=Depends(verify_token),
 ):
-    """Availability finder — returns VAs whose shift covers the given date+time."""
+    """Returns VAs whose shift covers the given date + time."""
     try:
-        schedules = _get_schedules_from_mirror()
+        from app.notion.schedules import _DAY_MAP
+        from datetime import date as date_type
+        import re
+
+        schedules     = _get_schedules()
+        target_weekday = date_type.fromisoformat(date).weekday()
+
+        def time_to_minutes(t: str) -> int:
+            """Convert '8:00AM', '12NN', '3:30PM' → minutes since midnight."""
+            t = t.upper().strip()
+            if t in ("12NN", "12:00NN", "NOON"):
+                return 12 * 60
+            m = re.match(r"(\d{1,2})(?::(\d{2}))?(AM|PM)", t)
+            if not m:
+                return 0
+            h, mn, period = int(m.group(1)), int(m.group(2) or 0), m.group(3)
+            if period == "PM" and h != 12:
+                h += 12
+            if period == "AM" and h == 12:
+                h = 0
+            return h * 60 + mn
+
+        # Convert query time (HH:MM 24h) to minutes
+        qh, qm    = map(int, time.split(":"))
+        query_min = qh * 60 + qm
+
         available = []
+        seen      = set()
         for s in schedules:
-            if date not in s.get("work_days_dates", []):
+            if s["va_id"] in seen:
                 continue
-            # Simple time overlap check
-            shift_in  = s.get("time_in", "00:00")
-            shift_out = s.get("time_out", "23:59")
-            if shift_in <= time <= shift_out:
+            works_today = any(
+                _DAY_MAP.get(d) == target_weekday
+                for d in s.get("work_days", [])
+            )
+            if not works_today:
+                continue
+            if s.get("time_in") and s.get("time_out"):
+                start = time_to_minutes(s["time_in"])
+                end   = time_to_minutes(s["time_out"])
+                if start <= query_min <= end:
+                    available.append(s)
+                    seen.add(s["va_id"])
+            else:
                 available.append(s)
+                seen.add(s["va_id"])
+
         return {"date": date, "time": time, "available": available}
     except Exception as e:
         log.exception("Error in availability finder")

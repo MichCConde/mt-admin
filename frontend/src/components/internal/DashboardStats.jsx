@@ -1,22 +1,22 @@
 const STATS = [
-  { key: "total_active", label: "Total Active VAs", color: "#4f46e5", bg: "#ede9fe", icon: "👥" },
-  { key: "agency_count", label: "Main Community",   color: "#00c9a7", bg: "#e6faf6", icon: "👤" },
-  { key: "cba_count",    label: "CBA Community",    color: "#f59e0b", bg: "#fef3c7", icon: "👤" },
-  { key: "no_client",    label: "Missing Reports",  color: "#ef4444", bg: "#fee2e2", icon: "👤" },
+  { key: "total_active", label: "Total Active VAs", color: "var(--indigo)", bg: "var(--indigo-dim)", icon: "👥" },
+  { key: "agency_count", label: "Main Community",   color: "var(--teal)",   bg: "var(--teal-dim)",   icon: "👤" },
+  { key: "cba_count",    label: "CBA Community",    color: "var(--amber)",  bg: "var(--amber-dim)",  icon: "👤" },
+  { key: "no_client",    label: "Missing Reports",  color: "var(--red)",    bg: "var(--red-dim)",    icon: "⚠️" },
 ];
 
 export default function DashboardStats({ data }) {
   if (!data) return null;
   return (
-    <div className="stats-grid">
+    <div className="stat-grid">
       {STATS.map(({ key, label, color, bg, icon }) => (
         <div key={key} className="stat-card">
-          <div className="stat-icon" style={{ background: bg }}>
-            <span>{icon}</span>
+          <div className="stat-icon-wrap" style={{ background: bg }}>
+            <span style={{ fontSize: 22 }}>{icon}</span>
           </div>
           <div>
-            <div className="stat-value" style={{ color }}>{data[key] ?? "—"}</div>
-            <div className="stat-label">{label}</div>
+            <div className="stat-num" style={{ color }}>{data[key] ?? "—"}</div>
+            <div className="stat-lbl">{label}</div>
           </div>
         </div>
       ))}

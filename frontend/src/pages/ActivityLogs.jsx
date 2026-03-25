@@ -2,126 +2,100 @@ import { useEffect, useState } from "react";
 import { fetchActivityLogs } from "../api/internal";
 import { Spinner } from "../ui/Indicators";
 
-const TYPE_CONFIG = {
+const TYPES = {
   email_sent:  { label: "Email Sent",  color: "#7c3aed", bg: "#ede9fe" },
   eod_check:   { label: "EOD Check",   color: "#0d9488", bg: "#ccfbf1" },
   sign_in:     { label: "Sign In",     color: "#0d9488", bg: "#ccfbf1" },
-  sync:        { label: "Sync",        color: "#0d9488", bg: "#ccfbf1" },
-  flag_added:  { label: "Flag Added",  color: "#b45309", bg: "#fef3c7" },
+  sync:        { label: "Sync",        color: "#2563eb", bg: "#dbeafe" },
+  flag_added:  { label: "Flag",        color: "#b45309", bg: "#fef3c7" },
 };
 
-function getCfg(action = "") {
-  return TYPE_CONFIG[action.toLowerCase().replace(/ /g, "_")]
-    || { label: action, color: "#374151", bg: "#f3f4f6" };
-}
-
-function groupByDate(logs) {
+const cfg  = (a = "") => TYPES[a.toLowerCase().replace(/ /g,"_")]
+                      || { label: a, color: "var(--text-2)", bg: "#f3f4f6" };
+const ago  = r => { if (!r) return ""; const m = Math.floor((Date.now()-new Date(r))/60000);
+                    return m<60 ? `${m}m ago` : m<1440 ? `${Math.floor(m/60)}h ago` : `${Math.floor(m/1440)}d ago`; };
+const full = r => r ? new Date(r).toLocaleString("en-US",{month:"short",day:"numeric",
+                    year:"numeric",hour:"numeric",minute:"2-digit"}) : "";
+const grp  = logs => {
   const out = {};
-  for (const log of logs) {
-    const raw = log.created_at || "";
-    const key = raw
-      ? new Date(raw).toLocaleDateString("en-US", {
-          weekday: "long", year: "numeric", month: "long", day: "numeric"
-        }).toUpperCase()
+  for (const l of logs) {
+    const k = l.created_at
+      ? new Date(l.created_at).toLocaleDateString("en-US",
+          {weekday:"long",year:"numeric",month:"long",day:"numeric"}).toUpperCase()
       : "UNKNOWN DATE";
-    (out[key] = out[key] || []).push(log);
+    (out[k]=out[k]||[]).push(l);
   }
   return out;
-}
-
-function timeAgo(raw) {
-  if (!raw) return "";
-  const m = Math.floor((Date.now() - new Date(raw)) / 60000);
-  if (m < 60) return `${m}m ago`;
-  const h = Math.floor(m / 60);
-  if (h < 24) return `${h}h ago`;
-  return `${Math.floor(h / 24)}d ago`;
-}
-
-function fullDT(raw) {
-  if (!raw) return "";
-  return new Date(raw).toLocaleString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-    hour: "numeric", minute: "2-digit",
-  });
-}
+};
 
 export default function ActivityLogs() {
   const [logs,    setLogs]    = useState([]);
   const [loading, setLoading] = useState(true);
   const [filter,  setFilter]  = useState("all");
 
-  async function load() {
+  const load = async () => {
     setLoading(true);
-    try {
-      const res = await fetchActivityLogs(200);
-      setLogs(res.logs || []);
-    } catch { setLogs([]); }
-    finally  { setLoading(false); }
-  }
+    try { const r = await fetchActivityLogs(200); setLogs(r.logs || []); }
+    catch { setLogs([]); }
+    finally { setLoading(false); }
+  };
 
   useEffect(() => { load(); }, []);
 
   const types    = ["all", ...new Set(logs.map(l => l.action).filter(Boolean))];
   const filtered = filter === "all" ? logs : logs.filter(l => l.action === filter);
-  const grouped  = groupByDate(filtered);
+  const grouped  = grp(filtered);
 
   return (
     <div className="page">
-      <div>
+      <div className="page-head">
         <h1 className="page-title">Activity Logs</h1>
         <p className="page-sub">{logs.length} events recorded</p>
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6, maxWidth: 500 }}>
-        <label style={{ fontSize: 13, fontWeight: 600, color: "#374151" }}>Filter by Type</label>
-        <select className="select" value={filter} onChange={e => setFilter(e.target.value)}>
-          {types.map(t => (
-            <option key={t} value={t}>
-              {t === "all" ? "All Types" : getCfg(t).label}
-            </option>
-          ))}
-        </select>
+      <div className="flex-row">
+        <div style={{ display:"flex", flexDirection:"column", gap:4 }}>
+          <label style={{ fontSize:12, fontWeight:600, color:"var(--text-3)",
+            textTransform:"uppercase", letterSpacing:"0.5px" }}>Filter by Type</label>
+          <select className="sel" value={filter} onChange={e => setFilter(e.target.value)}
+            style={{ minWidth: 200 }}>
+            {types.map(t => <option key={t} value={t}>{t === "all" ? "All Types" : cfg(t).label}</option>)}
+          </select>
+        </div>
+        <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}
+          style={{ alignSelf:"flex-end" }}>
+          ↻ Refresh
+        </button>
       </div>
 
-      <button className="btn btn-ghost btn-sm" onClick={load} disabled={loading}
-        style={{ alignSelf: "flex-start" }}>
-        ↻ Refresh
-      </button>
-
-      {loading ? <Spinner fullPage /> : (
-        <div className="activity-feed">
-          {Object.entries(grouped).map(([dateLabel, entries]) => (
-            <div key={dateLabel} className="activity-group">
-              <p className="activity-date-label">{dateLabel}</p>
-              <div className="activity-card">
-                {entries.map((log, i) => {
-                  const cfg = getCfg(log.action);
-                  const ts  = log.created_at || "";
-                  const desc = log.detail?.description
-                    || log.detail?.type
-                    || (typeof log.detail === "string" ? log.detail : "")
-                    || log.action;
+      {loading ? <Spinner full /> : (
+        <div className="feed">
+          {Object.entries(grouped).map(([date, entries]) => (
+            <div key={date} className="feed-group">
+              <p className="feed-date">{date}</p>
+              <div className="feed-card">
+                {entries.map((l, i) => {
+                  const c   = cfg(l.action);
+                  const ts  = l.created_at || "";
+                  const desc = l.detail?.description || l.detail?.type
+                             || (typeof l.detail === "string" ? l.detail : "") || l.action;
                   return (
-                    <div key={i} className="activity-row">
-                      <span className="activity-dot" style={{ background: cfg.color }} />
-                      <div className="activity-body">
-                        <div className="activity-top">
-                          <span className="activity-badge"
-                            style={{ color: cfg.color, background: cfg.bg }}>
-                            {cfg.label}
+                    <div key={i} className="feed-row">
+                      <span className="feed-dot" style={{ background: c.color }} />
+                      <div className="feed-body">
+                        <div className="feed-top">
+                          <span className="feed-badge" style={{ color:c.color, background:c.bg }}>
+                            {c.label}
                           </span>
-                          <span className="activity-desc">{desc}</span>
+                          <span className="feed-desc">{desc}</span>
                         </div>
-                        {(log.user_email || log.user_uid) && (
-                          <p className="activity-by">
-                            by {log.user_email || log.user_uid}
-                          </p>
+                        {(l.user_email || l.user_uid) && (
+                          <p className="feed-by">by {l.user_email || l.user_uid}</p>
                         )}
                       </div>
-                      <div className="activity-time">
-                        <span className="activity-ago">{timeAgo(ts)}</span>
-                        <span className="activity-full-time">{fullDT(ts)}</span>
+                      <div className="feed-time">
+                        <span className="feed-ago">{ago(ts)}</span>
+                        <span className="feed-full">{full(ts)}</span>
                       </div>
                     </div>
                   );
@@ -129,9 +103,7 @@ export default function ActivityLogs() {
               </div>
             </div>
           ))}
-          {Object.keys(grouped).length === 0 && (
-            <p className="empty">No activity found.</p>
-          )}
+          {!Object.keys(grouped).length && <p className="empty">No activity found.</p>}
         </div>
       )}
     </div>

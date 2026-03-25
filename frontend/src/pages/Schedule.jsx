@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { fetchSchedules, fetchAvailable } from "../api/va";
-import { Spinner } from "../ui/Indicators";
-import { DataTable, Th, Td } from "../ui/Tables";
+import { Spinner, ErrorBanner } from "../ui/Indicators";
 import { todayISO } from "../utils/dates";
 import { cacheGet, cacheSet, TTL } from "../utils/cache";
 
@@ -21,54 +20,76 @@ export default function Schedule() {
   useEffect(() => {
     if (cacheGet("schedules")) { setLoading(false); return; }
     fetchSchedules()
-      .then(res => {
-        const data = res.schedules || [];
-        cacheSet("schedules", data, TTL.H1);
-        setSchedules(data);
-      })
+      .then(r => { cacheSet("schedules", r.schedules || [], TTL.H1); setSchedules(r.schedules || []); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }, []);
 
-  async function handleFind() {
+  const handleFind = async () => {
     setFinding(true);
-    try {
-      const res = await fetchAvailable(findDate, findTime);
-      setAvailable(res.available || []);
-    } catch { setAvailable([]); }
+    try { const r = await fetchAvailable(findDate, findTime); setAvailable(r.available || []); }
+    catch { setAvailable([]); }
     finally { setFinding(false); }
-  }
+  };
 
   const main = schedules.filter(s => s.type === "Agency" || s.community === "Main");
   const cba  = schedules.filter(s => s.type === "CBA"    || s.community === "CBA");
 
-  function DayGrid({ rows }) {
+  // Build a VA→days map for table view
+  function buildTable(rows) {
+    const map = {};
+    for (const s of rows) {
+      if (!map[s.va_name]) map[s.va_name] = { va_name: s.va_name, shift: s.shift, days: {} };
+      for (const d of (s.work_days || [])) {
+        map[s.va_name].days[d] = `${s.time_in || ""}–${s.time_out || ""}`;
+      }
+    }
+    return Object.values(map);
+  }
+
+  function ScheduleTable({ rows }) {
+    const tableData = buildTable(rows);
+    if (!tableData.length) return <p className="empty">No schedules found.</p>;
     return (
-      <div className="schedule-grid">
-        {DAYS.map(day => {
-          const shifts = rows.filter(s => s.work_days?.includes(day));
-          return (
-            <div key={day} className="day-col">
-              <div className="day-header">{day}</div>
-              {shifts.length === 0
-                ? <p className="empty-day">No shifts</p>
-                : shifts.map(s => (
-                    <div key={s.id} className="schedule-pill">
-                      <span className="sched-name">{s.va_name}</span>
-                      <span className="sched-time">{s.time_in} – {s.time_out}</span>
-                    </div>
-                  ))
-              }
-            </div>
-          );
-        })}
+      <div className="sched-table-wrap">
+        <table className="sched-table">
+          <thead>
+            <tr>
+              <th>VA Name</th>
+              <th>Shift</th>
+              {DAYS.map(d => <th key={d}>{d.slice(0, 3)}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {tableData.map(row => (
+              <tr key={row.va_name}>
+                <td><span style={{ fontWeight: 600, color: "var(--text-1)" }}>{row.va_name}</span></td>
+                <td>
+                  {row.shift
+                    ? <span className="badge badge-teal">{row.shift}</span>
+                    : <span className="sched-empty-cell">—</span>}
+                </td>
+                {DAYS.map(d => (
+                  <td key={d}>
+                    {row.days[d]
+                      ? <span className="sched-time-cell">
+                          <span className="sched-dot" />
+                          {row.days[d]}
+                        </span>
+                      : <span className="sched-empty-cell">—</span>}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     );
   }
 
   return (
     <div className="page">
-      <div>
+      <div className="page-head">
         <h1 className="page-title">Schedule</h1>
         <p className="page-sub">View VA shift times across the week. All times are in EST.</p>
       </div>
@@ -76,67 +97,46 @@ export default function Schedule() {
       <div className="utabs">
         {TABS.map(t => (
           <button key={t} className={`utab ${tab === t ? "active" : ""}`}
-            onClick={() => setTab(t)}>
-            {t}
-          </button>
+            onClick={() => setTab(t)}>{t}</button>
         ))}
       </div>
 
-      {error && <div className="banner-error">⚠ {error}</div>}
+      <ErrorBanner message={error} />
 
-      {loading ? <Spinner fullPage /> : <>
-        {tab === "Main Community"     && <DayGrid rows={main} />}
-        {tab === "CBA Community"      && <DayGrid rows={cba} />}
-        {tab === "By VA"              && (
-          <div className="table-wrap">
-            <DataTable>
-              <thead>
-                <tr><Th>VA Name</Th><Th>Work Days</Th><Th>Shift</Th><Th>Time</Th></tr>
-              </thead>
-              <tbody>
-                {schedules.length === 0
-                  ? <tr><td colSpan={4} className="empty">No schedules found.</td></tr>
-                  : schedules.map(s => (
-                      <tr key={s.id}>
-                        <Td>{s.va_name}</Td>
-                        <Td>{s.work_days?.join(", ") || "—"}</Td>
-                        <Td>{s.shift || "—"}</Td>
-                        <Td>{s.time_in} – {s.time_out}</Td>
-                      </tr>
-                    ))
-                }
-              </tbody>
-            </DataTable>
-          </div>
-        )}
-        {tab === "Availability Finder" && (
-          <div className="card" style={{ maxWidth: 500 }}>
-            <h2 className="section-title" style={{ marginBottom: 16 }}>Find Available VAs</h2>
-            <div className="finder-row">
-              <input type="date" className="input" value={findDate}
-                onChange={e => setFindDate(e.target.value)} />
-              <input type="time" className="input" value={findTime}
-                onChange={e => setFindTime(e.target.value)} />
-              <button className="btn btn-teal" onClick={handleFind} disabled={finding}>
-                {finding ? "Searching…" : "Find"}
-              </button>
-            </div>
-            {available !== null && (
-              <div className="finder-results">
-                {available.length === 0
-                  ? <p className="empty">No VAs available at that time.</p>
-                  : available.map(s => (
-                      <div key={s.id} className="result-pill">
-                        {s.va_name}
-                        <span className="result-shift">{s.shift}</span>
-                      </div>
-                    ))
-                }
+      {loading ? <Spinner full /> : (
+        <>
+          {tab === "Main Community" && <ScheduleTable rows={main} />}
+          {tab === "CBA Community"  && <ScheduleTable rows={cba}  />}
+          {tab === "By VA"          && <ScheduleTable rows={schedules} />}
+          {tab === "Availability Finder" && (
+            <div className="card card-pad" style={{ maxWidth: 480 }}>
+              <h2 className="section-title" style={{ marginBottom: 16 }}>Find Available VAs</h2>
+              <div className="finder-row">
+                <input type="date" className="inp" value={findDate}
+                  onChange={e => setFindDate(e.target.value)} />
+                <input type="time" className="inp" value={findTime}
+                  onChange={e => setFindTime(e.target.value)} />
+                <button className="btn btn-teal" onClick={handleFind} disabled={finding}>
+                  {finding ? "Searching…" : "Find"}
+                </button>
               </div>
-            )}
-          </div>
-        )}
-      </>}
+              {available !== null && (
+                <div className="finder-results">
+                  {!available.length
+                    ? <p className="empty" style={{ padding: "12px 0" }}>No VAs available.</p>
+                    : available.map(s => (
+                        <div key={s.id} className="res-pill">
+                          {s.va_name}
+                          {s.shift && <span className="res-pill-shift">{s.shift}</span>}
+                        </div>
+                      ))
+                  }
+                </div>
+              )}
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }
