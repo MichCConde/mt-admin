@@ -1,12 +1,21 @@
 {
+  "version": 2,
+  "builds": [
+    {
+      "src": "app/main.py",
+      "use": "@vercel/python"
+    }
+  ],
+  "routes": [
+    {
+      "src": "/(.*)",
+      "dest": "app/main.py"
+    }
+  ],
   "crons": [
     {
-      "path": "/cron/sync",
-      "schedule": "*/30 * * * *"
-    },
-    {
-      "path": "/cron/eow-email",
-      "schedule": "0 8 * * 6"
+      "path": "/cron/morning-report",
+      "schedule": "0 13 * * 1-6"
     }
   ]
 }

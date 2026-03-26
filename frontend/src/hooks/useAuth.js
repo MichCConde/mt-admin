@@ -1,34 +1,76 @@
-import { useEffect, useState } from "react";
-import { getAuth, onAuthStateChanged } from "firebase/auth";
-import { getFirestore, doc, getDoc } from "firebase/firestore";
+import { useState, useEffect }              from "react";
+import { onAuthStateChanged }               from "firebase/auth";
+import { collection, query, where, getDocs } from "firebase/firestore";
+import { auth, db }                         from "../firebase";
 
+/**
+ * Tracks Firebase auth state AND verifies the user exists
+ * in the Firestore `staff` collection via a `uid` field.
+ *
+ * Returns:
+ *   loading  — true while checking auth + Firestore
+ *   user     — Firebase user object, or null
+ *   staff    — Firestore staff document data, or null
+ *   denied   — true if Firebase Auth succeeded but user is NOT in staff collection
+ *   authError — string message if a Firestore error occurred
+ */
 export function useAuth() {
-  const [user,    setUser]    = useState(null);
-  const [role,    setRole]    = useState(null);  // "admin" | "hr" | null
-  const [loading, setLoading] = useState(true);
+  const [user,      setUser]      = useState(null);
+  const [staff,     setStaff]     = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [denied,    setDenied]    = useState(false);
+  const [authError, setAuthError] = useState("");
 
   useEffect(() => {
-    const auth = getAuth();
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (!firebaseUser) {
+        // Not logged in at all
         setUser(null);
-        setRole(null);
+        setStaff(null);
+        setDenied(false);
+        setAuthError("");
         setLoading(false);
         return;
       }
-      setUser(firebaseUser);
-      // Fetch role from Firestore staff collection
+
+      // Firebase Auth succeeded — now check Firestore staff collection by uid field
       try {
-        const db   = getFirestore();
-        const snap = await getDoc(doc(db, "staff", firebaseUser.uid));
-        setRole(snap.exists() ? snap.data().role || "viewer" : null);
-      } catch {
-        setRole(null);
+        const staffQuery = query(
+          collection(db, "staff"),
+          where("uid", "==", firebaseUser.uid)
+        );
+        const staffSnap = await getDocs(staffQuery);
+
+        if (!staffSnap.empty) {
+          // ✅ Found in staff collection — allow access
+          setUser(firebaseUser);
+          setStaff(staffSnap.docs[0].data());
+          setDenied(false);
+          setAuthError("");
+        } else {
+          // ❌ Not in staff collection — deny access
+          setUser(null);
+          setStaff(null);
+          setDenied(true);
+          setAuthError("");
+          await auth.signOut();
+        }
+      } catch (err) {
+        console.error("Firestore staff check failed:", err);
+        setUser(null);
+        setStaff(null);
+        setDenied(true);
+        setAuthError(
+          "Unable to verify your staff access. Please check your connection or contact your administrator."
+        );
+        await auth.signOut();
+      } finally {
+        setLoading(false);
       }
-      setLoading(false);
     });
-    return unsub;
+
+    return unsubscribe;
   }, []);
 
-  return { user, role, loading, isAdmin: role === "admin" };
+  return { user, staff, loading, denied, authError };
 }

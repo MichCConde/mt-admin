@@ -1,35 +1,69 @@
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
-import { useAuth } from "./hooks/useAuth";
-import { Spinner } from "./ui/Indicators";
-import Layout from "./components/common/Layout";
-
-import Dashboard         from "./pages/Dashboard";
-import VirtualAssistants from "./pages/VirtualAssistants";
-import Schedule          from "./pages/Schedule";
-import EOWReports        from "./pages/EowReports";   // ← matches actual filename
-import ActivityLogs      from "./pages/ActivityLogs";
-import Login             from "./pages/Login";
-
-function ProtectedRoute({ children }) {
-  const { user, loading } = useAuth();
-  if (loading) return <Spinner full />;
-  if (!user)   return <Navigate to="/login" replace />;
-  return children;
-}
+import { useAuth }       from "./hooks/useAuth";
+import Layout             from "./components/pages/Layout";
+import Login              from "./components/pages/Login";
+import ErrorBoundary      from "./components/ui/ErrorBoundary";
+import { colors, font }   from "./styles/tokens";
 
 export default function App() {
+  const { user, staff, loading, denied, authError } = useAuth();
+
+  // ── 1. Still checking auth + Firestore ───────────────────────────
+  if (loading) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        height: "100vh", background: colors.navy,
+        fontFamily: font.family, gap: 20,
+      }}>
+        <img
+          src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png"
+          alt="Monster Task"
+          style={{ width: 140, opacity: 0.6 }}
+        />
+        <div style={{ color: "#4A6080", fontSize: font.sm, fontWeight: 500 }}>
+          Loading…
+        </div>
+      </div>
+    );
+  }
+
+  // ── 2. Logged in but not in staff collection ──────────────────────
+  if (denied) {
+    return (
+      <div style={{
+        display: "flex", flexDirection: "column",
+        alignItems: "center", justifyContent: "center",
+        height: "100vh", background: colors.navy,
+        fontFamily: font.family, gap: 16, padding: 24,
+      }}>
+        <img
+          src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png"
+          alt="Monster Task"
+          style={{ width: 140, opacity: 0.6 }}
+        />
+        <div style={{
+          background: colors.dangerLight, border: `1.5px solid ${colors.dangerBorder}`,
+          borderRadius: 12, padding: "20px 28px", textAlign: "center", maxWidth: 380,
+        }}>
+          <div style={{ fontWeight: 700, color: colors.danger, fontSize: font.lg, marginBottom: 8 }}>
+            Access Denied
+          </div>
+          <div style={{ fontSize: font.base, color: colors.textBody, lineHeight: 1.6 }}>
+            {authError || "Your account is not registered as MT Staff. Please contact your administrator."}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // ── 3. Not logged in → show Login ─────────────────────────────────
+  if (!user) return <Login />;
+
+  // ── 4. Logged in + staff → show app, wrapped in app-level boundary ─
   return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
-          <Route index              element={<Dashboard />} />
-          <Route path="vas"         element={<VirtualAssistants />} />
-          <Route path="schedule"    element={<Schedule />} />
-          <Route path="eow"         element={<EOWReports />} />
-          <Route path="activity"    element={<ActivityLogs />} />
-        </Route>
-      </Routes>
-    </BrowserRouter>
+    <ErrorBoundary level="app">
+      <Layout user={user} staff={staff} />
+    </ErrorBoundary>
   );
 }
