@@ -72,3 +72,8 @@ def prop_number(page: dict, key: str) -> float | None:
 
 def prop_checkbox(page: dict, key: str) -> bool:
     return page.get("properties", {}).get(key, {}).get("checkbox", False)
+
+def prop_relation(page: dict, key: str) -> list[str]:
+    """Returns a list of related page IDs."""
+    items = page.get("properties", {}).get(key, {}).get("relation", [])
+    return [i["id"] for i in items]

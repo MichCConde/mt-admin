@@ -1,5 +1,4 @@
 import { getAuth } from "firebase/auth";
-
 const BASE = import.meta.env.VITE_API_URL || "";
 
 export async function apiFetch(path, options = {}) {
@@ -20,17 +19,6 @@ export async function apiFetch(path, options = {}) {
   return res.json();
 }
 
-export const fetchDashboard = () =>
-  apiFetch("/api/internal/dashboard");
-
-export const fetchEOWReport = (year, week, force = false) =>
-  apiFetch(`/api/internal/eow?year=${year}&week=${week}&force=${force}`);
-
-export const fetchActivityLogs = (limit = 50) =>
-  apiFetch(`/api/internal/activity?limit=${limit}`);
-
-export const fetchSyncStatus = () =>
-  apiFetch("/api/internal/sync/status");
-
-export const triggerSync = () =>
-  apiFetch("/api/internal/sync/notion", { method: "POST" });
+export const fetchDashboard    = ()              => apiFetch("/api/dashboard");
+export const fetchEOWReport    = (start, end)    => apiFetch(`/api/eow?start=${start}&end=${end}`);
+export const fetchActivityLogs = (limit = 200)   => apiFetch(`/api/activity?limit=${limit}`);

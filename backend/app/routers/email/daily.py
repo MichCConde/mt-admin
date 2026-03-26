@@ -1,97 +1,189 @@
-"""
-Daily morning report — sent to admin summarising previous day's EOD + attendance.
-"""
+# Identical logic to original email.py
 import smtplib
-import logging
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
-from datetime import date, timedelta
-
-from fastapi import APIRouter, Depends, Query, HTTPException
-
-from app.middleware.auth import verify_token
+from datetime import datetime, timedelta
+from fastapi import APIRouter, HTTPException
 from app.config import settings
 from app.notion import (
+    get_active_vas, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    get_attendance_for_date, get_active_vas, get_all_schedules,
+    get_all_active_contracts_by_va_id, va_works_on_date, EST,
 )
-from app.services import detect_keyword_flags
-from app.services.eod_checker import check_missing_eod, check_missing_attendance
-from app.routers.internal.activity import log_activity
 
-router = APIRouter(prefix="/api/email/daily", tags=["email-daily"])
-log    = logging.getLogger(__name__)
+router = APIRouter()
 
 
-@router.post("")
-async def send_daily_report(
-    date: str = Query(default=None),
-    user=Depends(verify_token),
-):
-    target = date or (date.today() - timedelta(days=1)).isoformat()
+def _last_name(full_name: str) -> str:
+    return full_name.strip().split()[-1].lower()
 
+
+def send_email(subject: str, html_body: str):
+    if not settings.email_sender or not settings.email_app_password or not settings.email_recipient_list:
+        raise ValueError("Email config incomplete.")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"MT Admin <{settings.email_sender}>"
+    msg["To"]      = ", ".join(settings.email_recipient_list)
+    msg.attach(MIMEText(html_body, "html"))
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(settings.email_sender, settings.email_app_password)
+        server.sendmail(settings.email_sender, settings.email_recipient_list, msg.as_string())
+
+
+def build_missing_report(date_str: str) -> dict:
+    vas             = get_active_vas()
+    contracts_by_va = get_all_active_contracts_by_va_id()
+    attendance      = get_attendance_for_date(date_str)
+    eod_main        = get_eod_main_for_date(date_str)
+    eod_cba         = get_eod_cba_for_date(date_str)
+
+    clock_ins          = [a for a in attendance if a["type"] == "IN"]
+    clocked_last_names = {a["last_name"] for a in clock_ins}
+
+    main_idx: dict[str, list] = {}
+    for r in eod_main:
+        main_idx.setdefault(r["name"].lower(), []).append(r)
+
+    cba_idx: dict[tuple, list] = {}
+    for r in eod_cba:
+        cba_idx.setdefault((r["name"].lower(), r["client"].lower()), []).append(r)
+
+    missing, submitted = [], []
+    working_vas = [va for va in vas if va_works_on_date(va, date_str)]
+
+    for va in working_vas:
+        key        = va["name"].strip().lower()
+        last       = _last_name(va["name"])
+        clocked_in = last in clocked_last_names
+        community  = va.get("community", "")
+
+        if community == "Main":
+            if main_idx.get(key):
+                submitted.extend(main_idx[key])
+            else:
+                missing.append({**va, "clocked_in": clocked_in, "missing_client": None,
+                                 "missing_type": "eod_only" if clocked_in else "clock_in_only"})
+
+        elif community == "CBA":
+            contracts = contracts_by_va.get(va["id"], [])
+            if not contracts:
+                reports = [r for r in eod_cba if r["name"].lower() == key]
+                if reports:
+                    submitted.extend(reports)
+                else:
+                    missing.append({**va, "clocked_in": clocked_in, "missing_client": None,
+                                     "missing_type": "eod_only" if clocked_in else "clock_in_only"})
+                continue
+            for contract in contracts:
+                client_key = contract["client_name"].lower()
+                if cba_idx.get((key, client_key)):
+                    submitted.extend(cba_idx[(key, client_key)])
+                else:
+                    missing.append({**va, "clocked_in": clocked_in,
+                                     "missing_client": contract["client_name"],
+                                     "missing_type": "eod_only" if clocked_in else "clock_in_only"})
+
+    late        = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
+    no_clock_in = [va for va in working_vas if _last_name(va["name"]) not in clocked_last_names]
+
+    return {
+        "date": date_str, "total_vas": len(working_vas),
+        "submitted_count": len(submitted), "clocked_in_count": len(clock_ins),
+        "missing": missing, "late": late, "no_clock_in": no_clock_in,
+    }
+
+
+def build_html_email(report: dict) -> str:
+    date_label = datetime.strptime(report["date"], "%Y-%m-%d").strftime("%A, %B %d, %Y")
+    missing    = report["missing"]
+    late       = report["late"]
+    no_clock   = report["no_clock_in"]
+    all_clear  = not missing and not late and not no_clock
+
+    def community_badge(va):
+        community   = va.get("community", "")
+        badge_color = {"Main": "#1D4ED8", "CBA": "#C2410C"}.get(community, "#6B7280")
+        return f'<span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>'
+
+    def missing_type_tag(va):
+        t = va.get("missing_type", "clock_in_only")
+        if t == "eod_only":
+            return '<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>'
+        return '<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✗ No clock-in · No EOD</span>'
+
+    def missing_row(va):
+        client_note = f' <span style="color:#6B7280;font-size:12px;">— {va["missing_client"]}</span>' if va.get("missing_client") else ""
+        return f'<tr><td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">{community_badge(va)}<strong>{va["name"]}</strong>{client_note}{missing_type_tag(va)}</td></tr>'
+
+    def late_row(r):
+        p = r.get("punctuality", {})
+        return f'<tr><td style="padding:10px 16px;border-bottom:1px solid #FDE68A;"><strong>{r["name"]}</strong><span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:8px;">Submitted {p.get("submitted_est","")} — {p.get("minutes_late",0)}m late</span></td></tr>'
+
+    def no_clock_row(va, i):
+        bg = "#FFF8F8" if i % 2 == 0 else "#FFF2F2"
+        return f'<tr style="background:{bg};"><td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">{community_badge(va)}<strong>{va["name"]}</strong></td></tr>'
+
+    all_clear_section = '<div style="background:#ECFDF5;border:1.5px solid #A7F3D0;border-radius:10px;padding:16px 20px;text-align:center;"><div style="font-size:18px;font-weight:800;color:#059669;">✓ All Clear</div><div style="font-size:13px;color:#6B7280;margin-top:4px;">All VAs submitted their EOD reports on time.</div></div>' if all_clear else ""
+
+    missing_section = ""
+    if missing:
+        rows = "".join(missing_row(va) for va in missing)
+        eod_only = len([v for v in missing if v.get("missing_type") == "eod_only"])
+        both     = len(missing) - eod_only
+        missing_section = f'<div style="margin-bottom:24px;"><div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;overflow:hidden;"><div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;"><strong style="color:#DC2626;font-size:14px;">⚠ {len(missing)} Missing EOD Report{"s" if len(missing)!=1 else ""}</strong><span style="font-size:11px;color:#6B7280;margin-left:12px;">{eod_only} clocked in · {both} no clock-in</span></div><table style="width:100%;border-collapse:collapse;">{rows}</table></div></div>'
+
+    late_section = ""
+    if late:
+        rows = "".join(late_row(r) for r in late)
+        late_section = f'<div style="margin-bottom:24px;"><div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden;"><div style="background:#FFFDF0;padding:12px 16px;border-bottom:1px solid #FDE68A;"><strong style="color:#D97706;font-size:14px;">⏱ {len(late)} Late Submission{"s" if len(late)!=1 else ""}</strong></div><table style="width:100%;border-collapse:collapse;">{rows}</table></div></div>'
+
+    no_clock_section = ""
+    if no_clock:
+        rows = "".join(no_clock_row(va, i) for i, va in enumerate(no_clock))
+        no_clock_section = f'<div style="margin-bottom:24px;"><div style="background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:10px;overflow:hidden;"><div style="background:#F3F4F6;padding:12px 16px;border-bottom:1px solid #E5E7EB;"><strong style="color:#374151;font-size:14px;">🔔 {len(no_clock)} VA{"s" if len(no_clock)!=1 else ""} with No Clock-in</strong></div><table style="width:100%;border-collapse:collapse;">{rows}</table></div></div>'
+
+    mc = len(missing)
+    lc = len(late)
+    return f"""<!DOCTYPE html><html><body style="margin:0;padding:0;background:#F2F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
+  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+    <div style="background:#0D1F3C;padding:24px 32px;"><div style="font-size:20px;font-weight:800;color:#fff;">MT Admin</div><div style="font-size:12px;color:#4A6080;margin-top:2px;">Daily EOD Report</div></div>
+    <div style="background:#0CB8A9;padding:12px 32px;"><div style="font-size:14px;font-weight:700;color:#fff;">{date_label}</div></div>
+    <div style="padding:28px 32px;">
+      <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div><div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">ACTIVE VAs</div></div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:#0CB8A9;">{report["clocked_in_count"]}</div><div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">CLOCKED IN</div></div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:#059669;">{report["submitted_count"]}</div><div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">EOD SUBMITTED</div></div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:{"#DC2626" if mc else "#059669"};">{mc}</div><div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">MISSING EOD</div></div>
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;"><div style="font-size:24px;font-weight:800;color:{"#D97706" if lc else "#059669"};">{lc}</div><div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">LATE</div></div>
+      </div>
+      {all_clear_section}{missing_section}{late_section}{no_clock_section}
+    </div>
+    <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;"><div style="font-size:12px;color:#9CA3AF;">Automated report from MT Admin. All times in EST.</div></div>
+  </div></body></html>"""
+
+
+@router.post("/send-morning-report")
+def send_morning_report():
     try:
-        main      = get_eod_main_for_date(target)
-        cba       = get_eod_cba_for_date(target)
-        att       = get_attendance_for_date(target)
-        vas       = get_active_vas()
-        schedules = get_all_schedules()
-
-        all_reports     = main + cba
-        missing_eod     = check_missing_eod(target, vas, all_reports, schedules)
-        missing_att     = check_missing_attendance(target, vas, att, schedules)
-        flags           = detect_keyword_flags(all_reports)
-
-        subject = f"[Monster Task] Daily EOD Report — {target}"
-        body    = _build_daily_html(target, all_reports, missing_eod, missing_att, flags)
-
-        _send_email(subject, body, recipients=[settings.email_admin])
-        log_activity("email_sent", user["uid"], {"type": "daily", "date": target})
-
-        return {"status": "sent", "date": target}
+        yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        report    = build_missing_report(yesterday)
+        total     = len(report["missing"]) + len(report["late"]) + len(report["no_clock_in"])
+        subject   = f"[MT Admin] ✓ All Clear — {yesterday}" if total == 0 else f"[MT Admin] {total} Issue{'s' if total!=1 else ''} — EOD Report {yesterday}"
+        send_email(subject, build_html_email(report))
+        return {"sent": True, "date": yesterday, "recipients": settings.email_recipient_list,
+                "summary": {"missing": len(report["missing"]), "late": len(report["late"]), "no_clock_in": len(report["no_clock_in"])}}
     except Exception as e:
-        log.exception("Daily email error for %s", target)
         raise HTTPException(status_code=500, detail=str(e))
 
 
-def _build_daily_html(date_str, reports, missing_eod, missing_att, flags) -> str:
-    def _list(items, key="va_name"):
-        if not items:
-            return "<li><em>None</em></li>"
-        return "".join(f"<li>{i[key]}</li>" for i in items)
-
-    flag_rows = "".join(
-        f"<tr><td>{f['va_name']}</td><td>{', '.join(f['keywords'])}</td>"
-        f"<td>{f['excerpt'][:120]}…</td></tr>"
-        for f in flags
-    ) or "<tr><td colspan='3'><em>No flags</em></td></tr>"
-
-    return f"""
-    <h2>Daily EOD Report — {date_str}</h2>
-    <p><strong>Total Reports:</strong> {len(reports)}</p>
-
-    <h3>Missing EOD Reports ({len(missing_eod)})</h3>
-    <ul>{_list(missing_eod)}</ul>
-
-    <h3>Missing Clock-In ({len(missing_att)})</h3>
-    <ul>{_list(missing_att)}</ul>
-
-    <h3>Flagged Comments ({len(flags)})</h3>
-    <table border="1" cellpadding="4">
-        <tr><th>VA</th><th>Keywords</th><th>Excerpt</th></tr>
-        {flag_rows}
-    </table>
-    """
-
-
-def _send_email(subject: str, html: str, recipients: list[str]):
-    msg                   = MIMEMultipart("alternative")
-    msg["Subject"]        = subject
-    msg["From"]           = settings.smtp_user
-    msg["To"]             = ", ".join(recipients)
-    msg.attach(MIMEText(html, "html"))
-
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port) as s:
-        s.starttls()
-        s.login(settings.smtp_user, settings.smtp_pass)
-        s.sendmail(settings.smtp_user, recipients, msg.as_string())
+@router.post("/send-report/{date}")
+def send_report_for_date(date: str):
+    try:
+        report  = build_missing_report(date)
+        total   = len(report["missing"]) + len(report["late"])
+        subject = f"[MT Admin] ✓ All Clear — {date}" if total == 0 else f"[MT Admin] {total} Issue{'s' if total!=1 else ''} — EOD Report {date}"
+        send_email(subject, build_html_email(report))
+        return {"sent": True, "date": date}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

@@ -1,90 +1,103 @@
-from fastapi import APIRouter, Depends, Query, HTTPException
-from app.middleware.auth import verify_token
-from app.firebase import get_db
-from app.notion.vas import get_active_vas
-from app.notion.schedules import build_schedules_from_vas
-import logging
+# Identical logic to original schedule.py
+import re
+from fastapi import APIRouter, HTTPException
+from app.notion import get_active_vas
 
-router = APIRouter(prefix="/api/va/schedule", tags=["va-schedule"])
-log    = logging.getLogger(__name__)
+router = APIRouter()
+
+SCHEDULE_DAYS = {
+    "Mon - Fri": ["Mon", "Tue", "Wed", "Thu", "Fri"],
+    "Mon - Sun": ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+    "Flexible":  [],
+}
 
 
-def _get_schedules() -> list[dict]:
-    """
-    Build schedule from VA mirror in Firestore (fast),
-    falling back to live Notion fetch if mirror is empty.
-    """
-    db   = get_db()
-    docs = list(db.collection("va_mirror").stream())
-    vas  = [d.to_dict() for d in docs] if docs else get_active_vas()
-    return build_schedules_from_vas(vas)
+def parse_shift_blocks(shift_time_str: str) -> list[dict]:
+    if not shift_time_str:
+        return []
+
+    segments = re.split(r'<br\s*/?>\s*|[\n;]+', shift_time_str, flags=re.IGNORECASE)
+    blocks   = []
+
+    for seg in segments:
+        seg = seg.strip()
+        if not seg:
+            continue
+
+        label_match = re.search(r'\(([^)]+)\)', seg)
+        label     = label_match.group(1).strip() if label_match else ""
+        seg_clean = re.sub(r'\([^)]+\)', '', seg).strip()
+
+        pattern = (
+            r'(\d{1,2}(?::\d{2})?)\s*(AM|PM|am|pm)?\s*[-–]\s*'
+            r'(\d{1,2}(?::\d{2})?)\s*(AM|PM|am|pm)?'
+        )
+        m = re.search(pattern, seg_clean, re.IGNORECASE)
+        if not m:
+            continue
+
+        def to_24h(num_str, ampm, fallback="AM"):
+            parts = num_str.split(":")
+            h  = int(parts[0])
+            mn = int(parts[1]) if len(parts) > 1 else 0
+            ap = (ampm or fallback or "AM").upper()
+            if ap == "PM" and h != 12: h += 12
+            elif ap == "AM" and h == 12: h = 0
+            return h, mn
+
+        start_ampm = m.group(2)
+        end_ampm   = m.group(4)
+
+        start_h, start_m = to_24h(m.group(1), start_ampm)
+        inferred         = end_ampm or start_ampm or "AM"
+        end_h,   end_m   = to_24h(m.group(3), end_ampm, inferred)
+
+        if end_h <= start_h and not end_ampm:
+            eh, em = to_24h(m.group(3), "PM")
+            if eh > start_h:
+                end_h, end_m = eh, em
+
+        def fmt(h, mn):
+            ap  = "PM" if h >= 12 else "AM"
+            h12 = h % 12 or 12
+            return f"{h12}:{str(mn).zfill(2)} {ap}"
+
+        display = f"{fmt(start_h, start_m)} – {fmt(end_h, end_m)} EST"
+        if label:
+            display += f" ({label})"
+
+        blocks.append({
+            "start_h": start_h, "start_m": start_m,
+            "end_h":   end_h,   "end_m":   end_m,
+            "label":   label,
+            "raw":     seg.strip(),
+            "display": display,
+        })
+
+    return blocks
 
 
 @router.get("")
-async def list_schedules(user=Depends(verify_token)):
+def get_schedule():
     try:
-        return {"schedules": _get_schedules()}
+        vas = get_active_vas()
+        enriched = []
+        for va in vas:
+            raw_schedule = va.get("schedule", "")
+            days     = SCHEDULE_DAYS.get(raw_schedule, [])
+            blocks   = parse_shift_blocks(va.get("shift_time", ""))
+            flexible = raw_schedule == "Flexible"
+            enriched.append({
+                **va,
+                "schedule_days":  days,
+                "shift_blocks":   blocks,
+                "is_flexible":    flexible,
+                "has_shift_data": len(blocks) > 0,
+            })
+        return {
+            "vas":            enriched,
+            "total":          len(enriched),
+            "flexible_count": sum(1 for v in enriched if v["is_flexible"]),
+        }
     except Exception as e:
-        log.exception("Error fetching schedules")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/available")
-async def find_available(
-    date: str = Query(...),
-    time: str = Query(..., description="HH:MM in 24h format"),
-    user=Depends(verify_token),
-):
-    """Returns VAs whose shift covers the given date + time."""
-    try:
-        from app.notion.schedules import _DAY_MAP
-        from datetime import date as date_type
-        import re
-
-        schedules     = _get_schedules()
-        target_weekday = date_type.fromisoformat(date).weekday()
-
-        def time_to_minutes(t: str) -> int:
-            """Convert '8:00AM', '12NN', '3:30PM' → minutes since midnight."""
-            t = t.upper().strip()
-            if t in ("12NN", "12:00NN", "NOON"):
-                return 12 * 60
-            m = re.match(r"(\d{1,2})(?::(\d{2}))?(AM|PM)", t)
-            if not m:
-                return 0
-            h, mn, period = int(m.group(1)), int(m.group(2) or 0), m.group(3)
-            if period == "PM" and h != 12:
-                h += 12
-            if period == "AM" and h == 12:
-                h = 0
-            return h * 60 + mn
-
-        # Convert query time (HH:MM 24h) to minutes
-        qh, qm    = map(int, time.split(":"))
-        query_min = qh * 60 + qm
-
-        available = []
-        seen      = set()
-        for s in schedules:
-            if s["va_id"] in seen:
-                continue
-            works_today = any(
-                _DAY_MAP.get(d) == target_weekday
-                for d in s.get("work_days", [])
-            )
-            if not works_today:
-                continue
-            if s.get("time_in") and s.get("time_out"):
-                start = time_to_minutes(s["time_in"])
-                end   = time_to_minutes(s["time_out"])
-                if start <= query_min <= end:
-                    available.append(s)
-                    seen.add(s["va_id"])
-            else:
-                available.append(s)
-                seen.add(s["va_id"])
-
-        return {"date": date, "time": time, "available": available}
-    except Exception as e:
-        log.exception("Error in availability finder")
         raise HTTPException(status_code=500, detail=str(e))

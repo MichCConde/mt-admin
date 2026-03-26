@@ -1,13 +1,10 @@
 import { apiFetch } from "./internal";
 
 export const sendDailyEmail = (date) =>
-  apiFetch(`/api/email/daily?date=${date}`, { method: "POST" });
+  apiFetch(`/api/email/send-report/${date}`, { method: "POST" });
 
-export const sendEOWEmail = (year, week) =>
-  apiFetch(`/api/email/eow?year=${year}&week=${week}`, { method: "POST" });
+export const sendMorningReport = () =>
+  apiFetch("/api/email/send-morning-report", { method: "POST" });
 
-export const sendAlert = (payload) =>
-  apiFetch("/api/email/alerts", {
-    method: "POST",
-    body: JSON.stringify(payload),
-  });
+export const sendEOWEmail = (start, end) =>
+  apiFetch(`/api/email/send-eow-report?start=${start}&end=${end}`, { method: "POST" });

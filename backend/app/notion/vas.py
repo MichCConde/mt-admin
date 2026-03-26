@@ -1,44 +1,63 @@
-from .client import query_database, prop_text, prop_select, prop_multi_select
-from app.config import settings
+"""
+VA database queries.
+Preserves original filters: Status=Active, Emp Status=Employee, Team=VA Team.
+Community property name has a trailing space: "Community ".
+"""
+import time
+from .core import get_prop, query_all, DB
+
+ACTIVE_STATUSES     = {"Active"}
+ACTIVE_EMP_STATUSES = {"Employee"}
+ALLOWED_TEAMS       = {"VA Team"}
+EXCLUDED_TEAMS      = {"Internal", "Project Based"}
+
+_va_cache: dict = {"data": None, "expires": 0.0}
 
 
-def va_last_name(full_name: str) -> str:
-    parts = full_name.strip().split()
-    return parts[-1].lower() if parts else ""
+def get_active_vas_cached() -> list[dict]:
+    now = time.time()
+    if _va_cache["data"] and now < _va_cache["expires"]:
+        return _va_cache["data"]
+    result = get_active_vas()
+    _va_cache["data"]    = result
+    _va_cache["expires"] = now + 300
+    return result
 
 
 def get_active_vas() -> list[dict]:
-    pages = query_database(
-        settings.va_db_id,
-        filters={"property": "Status", "select": {"equals": "Active"}}
-    )
-    return [_map_va(p) for p in pages]
+    pages = query_all(DB["va"], {
+        "and": [
+            {"property": "Status",     "select":       {"equals":   "Active"}},
+            {"property": "Emp Status", "select":       {"equals":   "Employee"}},
+            {"property": "Team",       "multi_select": {"contains": "VA Team"}},
+        ]
+    })
 
+    vas = []
+    for p in pages:
+        name       = get_prop(p, "Name").strip()
+        status     = get_prop(p, "Status")
+        emp_status = get_prop(p, "Emp Status")
+        teams      = get_prop(p, "Team")
 
-def _map_va(page: dict) -> dict:
-    """
-    ⚠️ Verify property names match your actual Notion VA database columns.
-    Key properties expected:
-      - Name (title)
-      - Status (select)
-      - Type (select): "Agency" | "CBA"
-      - Community (select)
-      - Client (text)
-      - Shift Time (rich_text) — e.g. "8:00AM-10:00AM (Andrea)\n10:00AM-12NN (Justin)"
-      - Work Days (multi_select) — e.g. ["Monday","Tuesday","Wednesday"]
-    """
-    name = prop_text(page, "Name")
-    return {
-        "id":         page["id"],
-        "name":       name,
-        "last_name":  va_last_name(name),
-        "type":       prop_select(page, "Type"),
-        "community":  prop_select(page, "Community"),
-        "client":     prop_text(page, "Client"),
-        "email":      prop_text(page, "Email"),
-        "status":     prop_select(page, "Status"),
-        "tags":       prop_multi_select(page, "Tags"),
-        # Schedule fields
-        "shift_time": prop_text(page, "Shift Time"),
-        "work_days":  prop_multi_select(page, "Work Days"),
-    }
+        if not name:                                        continue
+        if status     not in ACTIVE_STATUSES:               continue
+        if emp_status not in ACTIVE_EMP_STATUSES:           continue
+        if not any(t in ALLOWED_TEAMS for t in teams):      continue
+        if any(t in EXCLUDED_TEAMS for t in teams):         continue
+
+        vas.append({
+            "id":             p["id"],
+            "name":           name,
+            "community":      get_prop(p, "Community "),   # ← trailing space — matches Notion
+            "email":          get_prop(p, "MT Email Address"),
+            "phone":          get_prop(p, "Phone"),
+            "start_date":     get_prop(p, "Start Date"),
+            "schedule":       get_prop(p, "Schedule"),
+            "shift_time":     get_prop(p, "Shift Time"),
+            "schedule_notes": get_prop(p, "Schedule Notes"),
+            "contract_ids":   get_prop(p, "Contracts"),
+            "status":         status,
+        })
+
+    return sorted(vas, key=lambda v: v["name"])

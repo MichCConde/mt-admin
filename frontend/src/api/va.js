@@ -1,5 +1,4 @@
 import { getAuth } from "firebase/auth";
-
 const BASE = import.meta.env.VITE_API_URL || "";
 
 async function apiFetch(path, options = {}) {
@@ -20,20 +19,21 @@ async function apiFetch(path, options = {}) {
   return res.json();
 }
 
+// VA list — returns { vas: [...] }
 export const fetchVAs = () =>
-  apiFetch("/api/va/inspector");
+  apiFetch("/api/inspector/vas");
 
-export const fetchVA = (id) =>
-  apiFetch(`/api/va/inspector/${id}`);
+// EOD check for a date — returns eod_submissions, missing, etc.
+export const fetchEOD = (date) =>
+  apiFetch(`/api/eod?date=${date}`);
 
-export const fetchEOD = (date, force = false) =>
-  apiFetch(`/api/va/eod?date=${date}&force=${force}`);
+// Attendance check for a date
+export const fetchAttendance = (date) =>
+  apiFetch(`/api/attendance?date=${date}`);
 
-export const fetchAttendance = (date, force = false) =>
-  apiFetch(`/api/va/attendance?date=${date}&force=${force}`);
-
+// Schedule
 export const fetchSchedules = () =>
-  apiFetch("/api/va/schedule");
+  apiFetch("/api/schedule");
 
 export const fetchAvailable = (date, time) =>
-  apiFetch(`/api/va/schedule/available?date=${date}&time=${time}`);
+  apiFetch(`/api/schedule/available?date=${date}&time=${time}`);
