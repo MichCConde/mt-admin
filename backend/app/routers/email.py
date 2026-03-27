@@ -8,14 +8,11 @@ from app.notion import (
     get_active_vas, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     get_all_active_contracts_by_va_id, va_works_on_date,
+    match_client_name,
     EST,
 )
 
 router = APIRouter()
-
-
-def va_last_name(full_name: str) -> str:
-    return full_name.strip().split()[-1].lower()
 
 
 # ── Send function ─────────────────────────────────────────────────
@@ -47,8 +44,12 @@ def build_missing_report(date_str: str) -> dict:
     eod_main        = get_eod_main_for_date(date_str)
     eod_cba         = get_eod_cba_for_date(date_str)
 
-    clock_ins          = [a for a in attendance if a["type"] == "IN"]
-    clocked_last_names = {a["last_name"] for a in clock_ins}
+    # Build lookup by both full_name (new format) and last_name (old format)
+    name_to_clockins: dict[str, list] = {}
+    for a in attendance:
+        name_to_clockins.setdefault(a["full_name"], []).append(a)
+        if a["last_name"] != a["full_name"]:
+            name_to_clockins.setdefault(a["last_name"], []).append(a)
 
     main_idx: dict[str, list] = {}
     for r in eod_main:
@@ -62,10 +63,12 @@ def build_missing_report(date_str: str) -> dict:
     working_vas = [va for va in vas if va_works_on_date(va, date_str)]
 
     for va in working_vas:
-        key        = va["name"].strip().lower()
-        last       = va_last_name(va["name"])
-        clocked_in = last in clocked_last_names
-        community  = va.get("community", "")
+        key      = va["name"].strip().lower()
+        va_last  = va["name"].strip().split()[-1].lower()
+        # Try full name first (new format), fall back to last name (old format)
+        va_clockins = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
+        clocked_in  = len(va_clockins) > 0
+        community   = va.get("community", "")
 
         if community == "Main":
             if main_idx.get(key):
@@ -73,9 +76,10 @@ def build_missing_report(date_str: str) -> dict:
             else:
                 missing.append({
                     **va,
-                    "clocked_in":     clocked_in,
-                    "missing_client": None,
-                    "missing_type":   "eod_only" if clocked_in else "clock_in_only",
+                    "clocked_in":         clocked_in,
+                    "missing_client":     None,
+                    "missing_type":       "eod_only" if clocked_in else "clock_in_only",
+                    "needs_verification": False,
                 })
 
         elif community == "CBA":
@@ -87,34 +91,53 @@ def build_missing_report(date_str: str) -> dict:
                 else:
                     missing.append({
                         **va,
-                        "clocked_in":     clocked_in,
-                        "missing_client": None,
-                        "missing_type":   "eod_only" if clocked_in else "clock_in_only",
+                        "clocked_in":         clocked_in,
+                        "missing_client":     None,
+                        "missing_type":       "eod_only" if clocked_in else "clock_in_only",
+                        "needs_verification": False,
                     })
                 continue
+
             for contract in contracts:
                 client_key = contract["client_name"].lower()
+
+                # Per-contract clock-in with fuzzy match
+                contract_clocked_in = False
+                needs_verification  = False
+                for ci in va_clockins:
+                    is_match, needs_v = match_client_name(
+                        ci.get("client", ""), contract["client_name"]
+                    )
+                    if is_match:
+                        contract_clocked_in = True
+                        needs_verification  = needs_v
+                        break
+
                 if cba_idx.get((key, client_key)):
                     submitted.extend(cba_idx[(key, client_key)])
                 else:
                     missing.append({
                         **va,
-                        "clocked_in":     clocked_in,
-                        "missing_client": contract["client_name"],
-                        "missing_type":   "eod_only" if clocked_in else "clock_in_only",
+                        "clocked_in":         contract_clocked_in,
+                        "missing_client":     contract["client_name"],
+                        "missing_type":       "eod_only" if contract_clocked_in else "clock_in_only",
+                        "needs_verification": needs_verification,
                     })
 
     late = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
     no_clock_in = [
         va for va in working_vas
-        if va_last_name(va["name"]) not in clocked_last_names
+        if not (
+            name_to_clockins.get(va["name"].strip().lower()) or
+            name_to_clockins.get(va["name"].strip().split()[-1].lower())
+        )
     ]
 
     return {
         "date":             date_str,
         "total_vas":        len(working_vas),
         "submitted_count":  len(submitted),
-        "clocked_in_count": len(clock_ins),
+        "clocked_in_count": len(attendance),
         "missing":          missing,
         "late":             late,
         "no_clock_in":      no_clock_in,
@@ -136,10 +159,12 @@ def build_html_email(report: dict) -> str:
         return f'<span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>'
 
     def missing_type_tag(va):
-        t = va.get("missing_type", "clock_in_only")
+        t    = va.get("missing_type", "clock_in_only")
+        flag = ' <span style="color:#D97706;font-weight:800;" title="Client name needs verification">*</span>' \
+               if va.get("needs_verification") else ""
         if t == "eod_only":
-            return '<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>'
-        return '<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✗ No clock-in · No EOD</span>'
+            return f'<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>{flag}'
+        return f'<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✗ No clock-in · No EOD</span>{flag}'
 
     def missing_row(va):
         client_note = f' <span style="color:#6B7280;font-size:12px;">— {va["missing_client"]}</span>' if va.get("missing_client") else ""
@@ -262,7 +287,7 @@ def build_html_email(report: dict) -> str:
     <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;">
       <div style="font-size:12px;color:#9CA3AF;">
         This is an automated report from MT Admin. All times are in EST.
-        Attendance matched by last name — format: IN [Last Name], [Date].
+        * indicates clock-in client name needs manual verification.
       </div>
     </div>
   </div>

@@ -4,6 +4,7 @@ from datetime import date as date_type
 from app.notion import (
     get_active_vas, get_eod_for_va, get_attendance_for_date,
     get_all_active_contracts_by_va_id,
+    get_active_contracts_by_id,
 )
 from app.cache import cache_get, cache_set
 import calendar
@@ -51,15 +52,22 @@ def _fetch_attendance_parallel(dates: list[str]) -> dict[str, list]:
 def list_vas():
     """
     Return all active VA Team VAs for the VA list and dropdowns.
-    contract_ids is enriched from the Contracts DB so the badge count is correct.
+    Contracts are resolved from the VA's own 'Contracts' relation field
+    filtered against active contracts — avoids reverse-relation lookup issues.
     """
     try:
-        vas             = get_active_vas()
-        contracts_by_va = get_all_active_contracts_by_va_id()
+        vas              = get_active_vas()
+        contracts_by_id  = get_active_contracts_by_id()   # { contract_id: {client_name, ...} }
 
         enriched = []
         for va in vas:
-            active_contracts = contracts_by_va.get(va["id"], [])
+            # va["contract_ids"] = all linked contracts (active + inactive)
+            # filter to only the ones that appear in active contracts
+            active_contracts = [
+                contracts_by_id[cid]
+                for cid in va.get("contract_ids", [])
+                if cid in contracts_by_id
+            ]
             enriched.append({
                 **va,
                 "contract_ids": [c["contract_id"] for c in active_contracts],

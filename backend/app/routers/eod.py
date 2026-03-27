@@ -3,26 +3,25 @@ from app.notion import (
     get_active_vas, get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     get_all_active_contracts_by_va_id, va_works_on_date,
+    match_client_name,                              # ← 1. added import
 )
 
 router = APIRouter()
-
-
-def va_last_name(full_name: str) -> str:
-    return full_name.strip().split()[-1].lower()
 
 
 @router.get("")
 def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
     try:
         vas             = get_active_vas_cached()
-        contracts_by_va = get_all_active_contracts_by_va_id()  # 1 query, not N
+        contracts_by_va = get_all_active_contracts_by_va_id()
         attendance      = get_attendance_for_date(date)
         eod_main        = get_eod_main_for_date(date)
         eod_cba         = get_eod_cba_for_date(date)
 
-        clock_ins          = [a for a in attendance if a["type"] == "IN"]
-        clocked_last_names = {a["last_name"] for a in clock_ins}
+        # ← 2. removed type/last_name filter, replaced with full_name lookup
+        name_to_clockins: dict[str, list] = {}
+        for a in attendance:
+            name_to_clockins.setdefault(a["full_name"], []).append(a)
 
         main_idx: dict[str, list] = {}
         for r in eod_main:
@@ -35,14 +34,13 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
         submitted_all, missing = [], []
 
         for va in vas:
-            # Skip VAs who don't work on this day (e.g. Mon-Fri VAs on Saturday)
             if not va_works_on_date(va, date):
                 continue
 
             key        = va["name"].strip().lower()
-            last       = va_last_name(va["name"])
-            clocked_in = last in clocked_last_names
-            community  = va.get("community", "")
+            va_clockins = name_to_clockins.get(key, [])
+            clocked_in  = len(va_clockins) > 0          # ← 3. full_name match
+            community   = va.get("community", "")
 
             if community == "Main":
                 reports = main_idx.get(key, [])
@@ -61,7 +59,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     })
 
             elif community == "CBA":
-                contracts = contracts_by_va.get(va["id"], [])  # O(1) lookup
+                contracts = contracts_by_va.get(va["id"], [])
 
                 if not contracts:
                     reports = [r for r in eod_cba if r["name"].lower() == key]
@@ -83,17 +81,35 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                 for contract in contracts:
                     client_key = contract["client_name"].lower()
                     reports    = cba_idx.get((key, client_key), [])
+
+                    # ← 4. per-contract clock-in with fuzzy match
+                    contract_clocked_in = False
+                    needs_verification  = False
+                    for ci in va_clockins:
+                        is_match, needs_v = match_client_name(
+                            ci["client"], contract["client_name"]
+                        )
+                        if is_match:
+                            contract_clocked_in = True
+                            needs_verification  = needs_v
+                            break
+
                     if reports:
-                        submitted_all.extend(reports)
+                        for r in reports:
+                            submitted_all.append({
+                                **r,
+                                "needs_verification": needs_verification,
+                            })
                     else:
                         missing.append({
                             **va,
-                            "clocked_in":     clocked_in,
-                            "missing_client": contract["client_name"],
-                            "missing_type":   "clock_in_only" if not clocked_in else "eod_only",
+                            "clocked_in":         contract_clocked_in,
+                            "needs_verification": needs_verification,
+                            "missing_client":     contract["client_name"],
+                            "missing_type":       "clock_in_only" if not contract_clocked_in else "eod_only",
                             "missing_reason": (
                                 f"No clock-in and no EOD for client: {contract['client_name']}"
-                                if not clocked_in
+                                if not contract_clocked_in
                                 else f"Clocked in but no EOD for client: {contract['client_name']}"
                             ),
                         })
@@ -104,7 +120,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             "date":             date,
             "active_va_count":  len(vas),
             "submitted_count":  len(submitted_all),
-            "clocked_in_count": len(clock_ins),
+            "clocked_in_count": len(name_to_clockins),  # ← updated count source
             "missing_count":    len(missing),
             "late_count":       len(late),
             "eod_submissions":  submitted_all,

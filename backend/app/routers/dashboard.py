@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime, timedelta
 from app.notion import (
-    get_active_vas, get_active_vas_cached,
+    get_active_vas_cached,
     get_all_active_contracts_by_va_id,
+    get_active_contract_id_set,          # ← new
     get_eod_main_for_date, get_eod_cba_for_date,
     va_works_on_date,
     EST,
@@ -42,7 +43,6 @@ def get_missing_for_date(vas: list, date_str: str,
     missing = set()
 
     for va in vas:
-        # ── Skip if this VA doesn't work on this day ──────────────
         if not va_works_on_date(va, date_str):
             continue
 
@@ -74,26 +74,37 @@ def get_dashboard():
         now  = datetime.now(tz=EST)
         vas  = get_active_vas_cached()
 
+        # contracts_by_va — used for EOD missing check (groups by VA ID from Contract side)
         contracts_by_va = get_all_active_contracts_by_va_id()
+
+        # active_contract_ids — used for client COUNT (cross-ref VA's own relation field)
+        active_contract_ids = get_active_contract_id_set()
 
         # ── VA counts ─────────────────────────────────────────────
         main_vas = [v for v in vas if v.get("community") == "Main"]
         cba_vas  = [v for v in vas if v.get("community") == "CBA"]
 
         # ── CBA client distribution ───────────────────────────────
+        # Count how many of a VA's linked contracts are Active.
+        # Uses va["contract_ids"] (relation from VA DB) filtered against
+        # the active_contract_ids set — avoids relying on property name
+        # of the reverse relation on the Contract page.
         client_buckets: dict[int, list[str]] = {1: [], 2: [], 3: [], 4: []}
 
         for va in cba_vas:
-            contracts = contracts_by_va.get(va["id"], [])
-            count     = len(contracts) if contracts else 1
-            bucket    = min(count, 4)
+            active_count = sum(
+                1 for cid in va.get("contract_ids", [])
+                if cid in active_contract_ids
+            )
+            count  = active_count if active_count > 0 else 1
+            bucket = min(count, 4)
             client_buckets[bucket].append(va["name"])
 
         cba_distribution = [
-            { "label": "1 Client",   "count": len(client_buckets[1]), "vas": client_buckets[1] },
-            { "label": "2 Clients",  "count": len(client_buckets[2]), "vas": client_buckets[2] },
-            { "label": "3 Clients",  "count": len(client_buckets[3]), "vas": client_buckets[3] },
-            { "label": "4+ Clients", "count": len(client_buckets[4]), "vas": client_buckets[4] },
+            {"label": "1 Client",   "count": len(client_buckets[1]), "vas": client_buckets[1]},
+            {"label": "2 Clients",  "count": len(client_buckets[2]), "vas": client_buckets[2]},
+            {"label": "3 Clients",  "count": len(client_buckets[3]), "vas": client_buckets[3]},
+            {"label": "4+ Clients", "count": len(client_buckets[4]), "vas": client_buckets[4]},
         ]
 
         # ── Missing reports — yesterday ───────────────────────────

@@ -13,11 +13,9 @@ DB = {
     "contracts":  settings.contracts_db_id,
 }
 
-# ── Everything below this line stays exactly the same ─────────────
-
-EST            = timezone(timedelta(hours=-5))
-PHT            = timezone(timedelta(hours=+8))
-GRACE_MINUTES  = 15    # grace period before marking late
+EST             = timezone(timedelta(hours=-5))
+PHT             = timezone(timedelta(hours=+8))
+GRACE_MINUTES   = 15    # grace period before marking late
 EOD_CUTOFF_HOUR = 18   # fallback EOD cutoff: 6 PM EST
 
 # ── Timezone notes ────────────────────────────────────────────────
@@ -35,15 +33,15 @@ def get_prop(page: dict, name: str):
     if not p:
         return ""
     t = p.get("type")
-    if t == "title":       return "".join(r["plain_text"] for r in p.get("title", []))
-    if t == "rich_text":   return "".join(r["plain_text"] for r in p.get("rich_text", []))
-    if t == "select":      return p["select"]["name"] if p.get("select") else ""
-    if t == "multi_select":return [o["name"] for o in p.get("multi_select", [])]
-    if t == "date":        return p["date"]["start"] if p.get("date") else ""
-    if t == "created_time":return p.get("created_time", "")
-    if t == "number":      return p.get("number") or 0
-    if t == "email":       return p.get("email", "")
-    if t == "relation":    return [r["id"] for r in p.get("relation", [])]
+    if t == "title":        return "".join(r["plain_text"] for r in p.get("title", []))
+    if t == "rich_text":    return "".join(r["plain_text"] for r in p.get("rich_text", []))
+    if t == "select":       return p["select"]["name"] if p.get("select") else ""
+    if t == "multi_select": return [o["name"] for o in p.get("multi_select", [])]
+    if t == "date":         return p["date"]["start"] if p.get("date") else ""
+    if t == "created_time": return p.get("created_time", "")
+    if t == "number":       return p.get("number") or 0
+    if t == "email":        return p.get("email", "")
+    if t == "relation":     return [r["id"] for r in p.get("relation", [])]
     if t == "rollup":
         ro = p.get("rollup", {})
         if ro.get("type") == "array":
@@ -124,16 +122,16 @@ def eod_punctuality(submitted_at: str, time_out_str: str) -> dict:
     else:
         cutoff_h, cutoff_m = EOD_CUTOFF_HOUR, 0
 
-    cutoff  = submitted_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
+    cutoff   = submitted_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
     deadline = cutoff + timedelta(minutes=GRACE_MINUTES)
     on_time  = submitted_est <= deadline
     minutes_late = max(0, int((submitted_est - deadline).total_seconds() / 60))
 
     return {
-        "on_time":        on_time,
-        "submitted_est":  submitted_est.strftime("%I:%M %p EST"),
-        "expected_by":    deadline.strftime("%I:%M %p EST"),
-        "minutes_late":   minutes_late if not on_time else 0,
+        "on_time":       on_time,
+        "submitted_est": submitted_est.strftime("%I:%M %p EST"),
+        "expected_by":   deadline.strftime("%I:%M %p EST"),
+        "minutes_late":  minutes_late if not on_time else 0,
     }
 
 
@@ -164,6 +162,7 @@ def clock_in_punctuality(created_at: str, time_in_str: str) -> dict:
         "minutes_late":   minutes_late if not on_time else 0,
     }
 
+
 # ── Schedule helpers ──────────────────────────────────────────────
 # Mon=0, Tue=1, Wed=2, Thu=3, Fri=4, Sat=5, Sun=6  (Python weekday)
 
@@ -176,38 +175,34 @@ _SCHEDULE_WORKDAYS: dict[str, set[int]] = {
 def va_works_on_date(va: dict, date_str: str) -> bool:
     """
     Returns True if this VA is expected to work on the given date.
-
-    Uses the VA's 'schedule' property:
-      'Mon - Fri'  → Mon through Fri only
-      'Mon - Sun'  → Mon through Sat  (Sunday is never a workday)
-      'Flexible'   → Mon through Sat
+      'Mon - Fri'  → Mon–Fri only
+      'Mon - Sun'  → Mon–Sat  (Sunday is never a workday)
+      'Flexible'   → Mon–Sat
       anything else → defaults to Mon–Fri
-
-    This prevents Mon-Fri VAs from being flagged as missing on Saturdays.
     """
     weekday  = datetime.strptime(date_str, "%Y-%m-%d").weekday()
     schedule = va.get("schedule", "Mon - Fri")
     workdays = _SCHEDULE_WORKDAYS.get(schedule, {0, 1, 2, 3, 4})
     return weekday in workdays
 
+
 # ── VA Database ───────────────────────────────────────────────────
 
 ACTIVE_STATUSES     = {"Active"}
 ACTIVE_EMP_STATUSES = {"Employee"}
 ALLOWED_TEAMS       = {"VA Team"}
-EXCLUDED_TEAMS      = {"Internal", "Project Based"}   # never show these
+EXCLUDED_TEAMS      = {"Internal", "Project Based"}
 
-# ── VA list cache ─────────────────────────────────────────────────
 _va_cache: dict = {"data": None, "expires": 0.0}
 
 def get_active_vas_cached() -> list[dict]:
     import time
     now = time.time()
     if _va_cache["data"] and now < _va_cache["expires"]:
-        return _va_cache["data"]          # return cached result
-    result = get_active_vas()             # real Notion call
+        return _va_cache["data"]
+    result = get_active_vas()
     _va_cache["data"]    = result
-    _va_cache["expires"] = now + 300      # cache for 5 minutes
+    _va_cache["expires"] = now + 300      # 5 minutes
     return result
 
 def get_active_vas() -> list[dict]:
@@ -229,14 +224,13 @@ def get_active_vas() -> list[dict]:
         name       = get_prop(p, "Name").strip()
         status     = get_prop(p, "Status")
         emp_status = get_prop(p, "Emp Status")
-        teams      = get_prop(p, "Team")   # list of strings
+        teams      = get_prop(p, "Team")
 
-        # Python-level safety guards
-        if not name:                                            continue
-        if status      not in ACTIVE_STATUSES:                 continue
-        if emp_status  not in ACTIVE_EMP_STATUSES:             continue
-        if not any(t in ALLOWED_TEAMS for t in teams):         continue
-        if any(t in EXCLUDED_TEAMS for t in teams):            continue
+        if not name:                                         continue
+        if status      not in ACTIVE_STATUSES:              continue
+        if emp_status  not in ACTIVE_EMP_STATUSES:          continue
+        if not any(t in ALLOWED_TEAMS for t in teams):      continue
+        if any(t in EXCLUDED_TEAMS for t in teams):         continue
 
         vas.append({
             "id":             p["id"],
@@ -248,7 +242,7 @@ def get_active_vas() -> list[dict]:
             "schedule":       get_prop(p, "Schedule"),
             "shift_time":     get_prop(p, "Shift Time"),
             "schedule_notes": get_prop(p, "Schedule Notes"),
-            "contract_ids":   get_prop(p, "Contracts"),
+            "contract_ids":   get_prop(p, "Contracts"),   # relation → list of contract page IDs
             "status":         status,
         })
 
@@ -261,15 +255,8 @@ def get_all_active_contracts_by_va_id() -> dict[str, list[dict]]:
     """
     Query ALL active contracts from the Contracts DB in one shot and
     return them grouped by VA page ID.
-
-    This replaces the old per-VA approach (get_active_contracts_for_va)
-    which relied on reading the relation FROM the VA page. That relation
-    is defined on the Contracts side → VA, so the VA page never returned
-    contract IDs, causing every CBA VA to appear as "No clients".
-
-    ⚠️  The property that links a contract to a VA is named "VA" here.
-        If your Contracts DB uses a different property name (e.g. "VAs"
-        or "Virtual Assistant"), update the get_prop call below.
+    Used for EOD matching — do NOT use for client count display.
+    Client count should use len(va["contract_ids"]) from the VA DB directly.
     """
     pages = query_all(DB["contracts"], {
         "property": "Contract Status",
@@ -278,7 +265,7 @@ def get_all_active_contracts_by_va_id() -> dict[str, list[dict]]:
 
     result: dict[str, list[dict]] = {}
     for page in pages:
-        va_ids      = get_prop(page, "VA")           # relation → list of VA page IDs
+        va_ids      = get_prop(page, "VA")
         client_name = get_prop(page, "Client ").strip()
         contract    = {
             "contract_id":   page["id"],
@@ -293,8 +280,7 @@ def get_all_active_contracts_by_va_id() -> dict[str, list[dict]]:
 
 def get_active_contracts_for_va(contract_ids: list[str]) -> list[dict]:
     """
-    Legacy per-VA lookup kept for any callers that still pass explicit
-    contract_ids. Prefer get_all_active_contracts_by_va_id() for bulk use.
+    Legacy per-VA lookup. Prefer get_all_active_contracts_by_va_id() for bulk use.
     """
     if not contract_ids:
         return []
@@ -317,24 +303,49 @@ def get_active_contracts_for_va(contract_ids: list[str]) -> list[dict]:
 
 # ── Attendance ────────────────────────────────────────────────────
 
-def get_attendance_for_date(date_str: str) -> list[dict]:
-    utc_start, utc_end = est_day_bounds(date_str)
-    pages = query_all(DB["attendance"], {
-        "and": [
-            {"timestamp": "created_time", "created_time": {"on_or_after": utc_start}},
-            {"timestamp": "created_time", "created_time": {"before":      utc_end}},
-        ]
-    })
-    return [
-        {
-            "id":           p["id"],
-            "raw_name":     get_prop(p, "Name"),
-            "type":         get_prop(p, "Type"),
-            "created_time": p["created_time"],
-            "notes":        get_prop(p, "Clock In Notes"),
-        }
-        for p in pages
-    ]
+def match_client_name(typed: str, actual: str) -> tuple[bool, bool]:
+    """
+    Match a VA-typed client name against the actual contract client name.
+    Returns (is_match, needs_verification).
+
+    Rules:
+      Exact match (case-insensitive)        → (True, False)
+      actual.startswith(typed)              → (True, True)   ← fuzzy / needs review
+        e.g. "Ryan J"  vs "Ryan Jones"      → match + verify
+             "Ryan"    vs "Ryan Jones"      → match + verify
+      No prefix match                       → (False, False)
+        e.g. "R. Jones" vs "Ryan Jones"     → no match
+    """
+    t = typed.strip().lower()
+    a = actual.strip().lower()
+    if not t:
+        return False, False
+    if t == a:
+        return True, False
+    if a.startswith(t):
+        return True, True
+    return False, False
+
+
+def parse_attendance_name(raw_name: str) -> tuple[str, str]:
+    """
+    Parses attendance title into (full_name, last_name) handling both formats:
+
+    New format: "[Full Name], [Date]"
+      "Maria Conde, March 20, 2026"    → ("maria conde", "conde")
+      "Juan dela Cruz, March 20, 2026" → ("juan dela cruz", "cruz")
+
+    Old format (backward compat): "IN [Last Name], [Date]"
+      "IN Conde, March 20, 2026"       → ("conde", "conde")
+      "OUT Reyes, March 20, 2026"      → ("reyes", "reyes")
+
+    Returns (full_name, last_name). For old records both are the last name.
+    For new records, last_name is the last word of the full name.
+    """
+    before_comma = raw_name.split(',')[0].strip()
+
+    # Detect old format — starts with IN or OUT
+    old_match = re.match(r'^(IN|OUT)\s+(.+)
 
 
 # ── EOD — shared mapper ───────────────────────────────────────────
@@ -350,7 +361,6 @@ def _map_eod(page: dict, community: str) -> dict:
         "time_out":     time_out,
         "community":    community,
         "submitted_at": page["created_time"],
-        # Punctuality based on Time Out field vs actual submission time
         "punctuality":  eod_punctuality(page["created_time"], time_out),
     }
 
@@ -380,7 +390,7 @@ def get_eod_cba_for_date(date_str: str) -> list[dict]:
 def get_eod_for_va(va_name: str, community: str,
                    year: int, month: int) -> list[dict]:
     """Fetch all EOD reports for a specific VA in a given month."""
-    pad       = lambda n: str(n).padStart(2, "0") if False else str(n).zfill(2)
+    pad        = lambda n: str(n).zfill(2)
     start_date = f"{year}-{pad(month)}-01"
     last_day   = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day if month < 12 \
                  else 31
@@ -410,25 +420,24 @@ def get_eod_for_va(va_name: str, community: str,
         results.append(r)
 
     return sorted(results, key=lambda r: r["date"])
+, before_comma, re.IGNORECASE)
+    if old_match:
+        last = old_match.group(2).strip().lower()
+        return last, last   # full_name = last_name for old records
 
-def parse_attendance_last_name(raw_name: str) -> str:
-    """
-    Parse the attendance record title format: "IN [Last Name], [Date]"
-    Returns just the last name in lowercase for VA matching.
-
-    Examples:
-      "IN Conde, March 20, 2026"  → "conde"
-      "OUT Reyes, March 20, 2026" → "reyes"
-      "IN dela Cruz, March 20"    → "dela cruz"  (handles compound last names)
-    """
-    # Remove "IN " or "OUT " prefix
-    clean = re.sub(r'^(IN|OUT)\s+', '', raw_name.strip(), flags=re.IGNORECASE)
-    # Everything before the first comma is the last name
-    last_name = clean.split(',')[0].strip()
-    return last_name.lower()
+    # New format — full name before the comma
+    full = before_comma.lower()
+    last = full.split()[-1] if full else ""
+    return full, last
 
 
 def get_attendance_for_date(date_str: str) -> list[dict]:
+    """
+    Fetch all clock-in records for a given EST date.
+    All records in this DB are clock-ins — no Type field needed.
+    Filtered by created_time bounds converted to UTC.
+    Returns both full_name and last_name to support old + new record formats.
+    """
     utc_start, utc_end = est_day_bounds(date_str)
     pages = query_all(DB["attendance"], {
         "and": [
@@ -436,14 +445,91 @@ def get_attendance_for_date(date_str: str) -> list[dict]:
             {"timestamp": "created_time", "created_time": {"before":      utc_end}},
         ]
     })
-    return [
-        {
+    records = []
+    for p in pages:
+        raw       = get_prop(p, "Name")
+        full, last = parse_attendance_name(raw)
+        records.append({
             "id":           p["id"],
-            "raw_name":     get_prop(p, "Name"),
-            "last_name":    parse_attendance_last_name(get_prop(p, "Name")),
-            "type":         get_prop(p, "Type"),
+            "raw_name":     raw,
+            "full_name":    full,   # "maria conde" (new) or "conde" (old)
+            "last_name":    last,   # always just the last name
+            "client":       get_prop(p, "Client").strip(),
             "created_time": p["created_time"],
-            "notes":        get_prop(p, "Clock In Notes"),  # client info lives here for now
-        }
-        for p in pages
-    ]
+            "notes":        get_prop(p, "Clock In Notes"),
+        })
+    return records
+
+
+# ── EOD — shared mapper ───────────────────────────────────────────
+
+def _map_eod(page: dict, community: str) -> dict:
+    time_out = get_prop(page, "Time Out")
+    return {
+        "id":           page["id"],
+        "name":         get_prop(page, "Name").strip(),
+        "date":         get_prop(page, "Date"),
+        "client":       get_prop(page, "Client").strip(),
+        "time_in":      get_prop(page, "Time In"),
+        "time_out":     time_out,
+        "community":    community,
+        "submitted_at": page["created_time"],
+        "punctuality":  eod_punctuality(page["created_time"], time_out),
+    }
+
+
+def get_eod_main_for_date(date_str: str) -> list[dict]:
+    pages = query_all(DB["eod_main"], {"property": "Date", "date": {"equals": date_str}})
+    return [_map_eod(p, "Main") for p in pages]
+
+
+def get_eod_cba_for_date(date_str: str) -> list[dict]:
+    pages = query_all(DB["eod_cba"], {"property": "Date", "date": {"equals": date_str}})
+    reports = []
+    for p in pages:
+        r = _map_eod(p, "CBA")
+        r.update({
+            "new_leads":    get_prop(p, "New Leads Sourced:"),
+            "email_apps":   get_prop(p, "Email Applications Sent:"),
+            "website_apps": get_prop(p, "Website Applications Sent:"),
+            "follow_ups":   get_prop(p, "Follow Ups Completed:"),
+        })
+        reports.append(r)
+    return reports
+
+
+# ── VA Inspector — all reports for one VA ─────────────────────────
+
+def get_eod_for_va(va_name: str, community: str,
+                   year: int, month: int) -> list[dict]:
+    """Fetch all EOD reports for a specific VA in a given month."""
+    pad        = lambda n: str(n).zfill(2)
+    start_date = f"{year}-{pad(month)}-01"
+    last_day   = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day if month < 12 \
+                 else 31
+    end_date   = f"{year}-{pad(month)}-{pad(last_day)}"
+
+    f = {
+        "and": [
+            {"property": "Name", "rich_text": {"contains": va_name}},
+            {"property": "Date", "date":      {"on_or_after":  start_date}},
+            {"property": "Date", "date":      {"on_or_before": end_date}},
+        ]
+    }
+
+    db_id = DB["eod_cba"] if community == "CBA" else DB["eod_main"]
+    pages = query_all(db_id, f)
+
+    results = []
+    for p in pages:
+        r = _map_eod(p, community)
+        if community == "CBA":
+            r.update({
+                "new_leads":    get_prop(p, "New Leads Sourced:"),
+                "email_apps":   get_prop(p, "Email Applications Sent:"),
+                "website_apps": get_prop(p, "Website Applications Sent:"),
+                "follow_ups":   get_prop(p, "Follow Ups Completed:"),
+            })
+        results.append(r)
+
+    return sorted(results, key=lambda r: r["date"])

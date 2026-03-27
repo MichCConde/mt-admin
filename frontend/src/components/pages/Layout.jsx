@@ -13,8 +13,7 @@ import EowReports           from "../admin/EowReports";
 import ActivityLogs       from "../admin/ActivityLogs";
 import { SoonBadge }      from "../ui/Indicators";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
-
-import { wakeBackend } from "../../api";
+import { apiFetch, wakeBackend } from "../../api";
 
 import ErrorBoundary from "../ui/ErrorBoundary";
 import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/reportCache";
