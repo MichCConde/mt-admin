@@ -21,11 +21,10 @@ const MONTHS = ["January","February","March","April","May","June",
 const MONTH_OPTIONS = MONTHS.map((m, i) => ({ value: i + 1, label: m }));
 
 const TABS = [
+  { id: "reports",    label: "Reports"       },
   { id: "active",     label: "Active"        },
   { id: "main",       label: "Agency (Main)" },
   { id: "cba",        label: "CBA"           },
-  { id: "eod",        label: "EOD Reports"   },
-  { id: "attendance", label: "Attendance"    },
 ];
 
 function fmtDate(iso) {
@@ -558,12 +557,332 @@ function AttendanceTab() {
   );
 }
 
+// ── Filter pill component ─────────────────────────────────────────
+function FilterPill({ label, count, active, onClick, color }) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 6,
+        padding: "6px 14px", borderRadius: 20,
+        border: active ? `2px solid ${color}` : `1.5px solid ${colors.border}`,
+        background: active ? `${color}10` : colors.surface,
+        color: active ? color : colors.textMuted,
+        fontWeight: 700, fontSize: font.sm, fontFamily: font.family,
+        cursor: "pointer", transition: "all .12s",
+      }}
+    >
+      {label}
+      {count != null && (
+        <span style={{
+          background: active ? color : colors.surfaceAlt,
+          color: active ? "#fff" : colors.textMuted,
+          borderRadius: 10, padding: "1px 8px",
+          fontSize: font.xs, fontWeight: 800, minWidth: 20, textAlign: "center",
+        }}>
+          {count}
+        </span>
+      )}
+    </button>
+  );
+}
+
+// ── CSV export helper ─────────────────────────────────────────────
+function exportCSV(rows, date) {
+  const header = ["Name", "Client", "Community", "Clock In", "Punctuality", "Clock Out", "Submission", "Status"];
+  const csvRows = rows.map(r => [
+    r.va_name,
+    r.client || "—",
+    r.community,
+    r.clock_in || "Missing",
+    r.clock_in_status === "on_time" ? "On-time"
+      : r.clock_in_status === "late" ? `${r.clock_in_minutes_late}m late`
+      : r.clock_in_status === "early" ? `${r.clock_in_minutes_early}m early`
+      : "Missing",
+    r.clock_out || "Missing",
+    r.clock_out_status === "on_time" ? "On-time"
+      : r.clock_out_status === "late" ? `${r.clock_out_minutes_late}m late`
+      : r.clock_out_status === "early" ? `${r.clock_out_minutes_early}m early`
+      : "Missing",
+    r.status,
+  ]);
+
+  const csv = [header, ...csvRows].map(row =>
+    row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")
+  ).join("\n");
+
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `eod-report-${date}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// ── Status cell renderer ──────────────────────────────────────────
+function StatusCell({ status, minutesLate, minutesEarly }) {
+  if (status === "missing")
+    return <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>;
+  if (status === "late")
+    return <span style={{ color: colors.warning, fontWeight: 600 }}>{minutesLate} min late</span>;
+  if (status === "early")
+    return <span style={{ color: "#7C3AED", fontWeight: 600 }}>{minutesEarly} min early</span>;
+  return <span style={{ color: colors.success, fontWeight: 600 }}>On-time</span>;
+}
+
+// ── Cached banner for Reports ─────────────────────────────────────
+function ReportCachedBanner({ onRefresh, loading }) {
+  const mins = cacheTimeLeft(CACHE_KEYS.REPORT);
+  if (!mins) return null;
+  return (
+    <div style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
+      borderRadius: radius.md, padding: "8px 14px",
+    }}>
+      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
+        Showing cached data · expires in {mins} min
+      </span>
+      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
+        Refresh
+      </Button>
+    </div>
+  );
+}
+
+// ── Reports Tab ───────────────────────────────────────────────────
+function ReportsTab() {
+  const cached = cacheGet(CACHE_KEYS.REPORT);
+
+  const [date,       setDate]       = useState(() => cached?.date || todayISO());
+  const [data,       setData]       = useState(() => cached);
+  const [loading,    setLoading]    = useState(false);
+  const [error,      setError]      = useState("");
+  const [filter,     setFilter]     = useState("all");
+  const [search,     setSearch]     = useState("");
+  const [emailState, setEmailState] = useState("idle");
+
+  function fetchReport(targetDate, isRefresh) {
+    setLoading(true); setError(""); setEmailState("idle"); setSearch("");
+    if (isRefresh) { cacheClear(CACHE_KEYS.REPORT); }
+    else { setData(null); }
+
+    apiFetch(`/api/eod/report?date=${targetDate}`)
+      .then(result => {
+        cacheSet(CACHE_KEYS.REPORT, result);
+        setData(result);
+        setDate(targetDate);
+        logActivity(LOG_TYPES.EOD_CHECK, `Report checked for ${targetDate}`, { date: targetDate });
+      })
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  function run()     { fetchReport(date, false); }
+  function refresh() { fetchReport(data?.date || date, true); }
+
+  async function sendEmail() {
+    setEmailState("sending");
+    try {
+      await apiFetch(`/api/email/send-report/${data?.date || date}`, { method: "POST" });
+      setEmailState("sent");
+      logActivity(LOG_TYPES.EMAIL_SENT, `EOD email sent for ${data?.date || date}`, { date: data?.date || date });
+    } catch (e) { setEmailState("error"); }
+  }
+
+  const rows  = data?.rows  ?? [];
+  const stats = data?.stats ?? {};
+
+  const counts = {
+    all:     rows.length,
+    missing: rows.filter(r => r.status === "missing").length,
+    late:    rows.filter(r => r.status === "late").length,
+    early:   rows.filter(r => r.status === "early").length,
+    on_time: rows.filter(r => r.status === "on_time").length,
+  };
+
+  const filtered = rows.filter(r => {
+    if (filter !== "all" && r.status !== filter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (r.va_name || "").toLowerCase().includes(q)
+          || (r.client  || "").toLowerCase().includes(q);
+    }
+    return true;
+  });
+
+  const th = {
+    padding: "10px 14px", textAlign: "left",
+    fontSize: font.xs, fontWeight: 700, color: colors.textMuted,
+    textTransform: "uppercase", letterSpacing: "0.05em",
+    borderBottom: `2px solid ${colors.border}`, whiteSpace: "nowrap",
+  };
+  const td = {
+    padding: "10px 14px", fontSize: font.sm, color: colors.textBody,
+    borderBottom: `1px solid ${colors.border}`, whiteSpace: "nowrap",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+
+      {/* ── Controls ──────────────────────────────────────────── */}
+      <Card>
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div>
+            <label style={labelStyle}>Date</label>
+            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={dateInputStyle} />
+          </div>
+          <Button icon={Search} onClick={run} disabled={loading} style={{ height: 38 }}>
+            {loading ? "Loading…" : "Check EOD"}
+          </Button>
+          {data && (
+            <>
+              <Button
+                icon={emailState === "sent" ? CheckCircle2 : Send}
+                variant={emailState === "sent" ? "success" : "primary"}
+                onClick={sendEmail}
+                disabled={emailState === "sending" || emailState === "sent"}
+                style={{ height: 38 }}
+              >
+                {emailState === "sending" ? "Sending…"
+                  : emailState === "sent" ? "Email Sent!"
+                  : emailState === "error" ? "Retry Send"
+                  : "Send Email"}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => exportCSV(filtered, data?.date || date)}
+                style={{ height: 38 }}
+              >
+                Export CSV
+              </Button>
+            </>
+          )}
+        </div>
+        {emailState === "error" && (
+          <StatusBox variant="danger" style={{ marginTop: 12 }}>Failed to send email. Check backend config.</StatusBox>
+        )}
+      </Card>
+
+      {error && <StatusBox variant="danger">{error}</StatusBox>}
+
+      {data && (
+        <>
+          <ReportCachedBanner onRefresh={refresh} loading={loading} />
+
+          {/* ── Stat cards ────────────────────────────────────── */}
+          <StatRow>
+            <StatCard icon={Users}     label="Active VAs"       value={stats.active_vas ?? 0} />
+            <StatCard icon={UserCheck} label="Clocked In"       value={stats.clocked_in ?? 0}    highlight="teal" />
+            <StatCard icon={FileCheck} label="EOD Submitted"    value={stats.eod_submitted ?? 0} highlight="success" />
+            <StatCard icon={UserX}     label="Missing EOD"      value={stats.missing_eod ?? 0}   highlight={stats.missing_eod > 0 ? "danger" : "success"} />
+            <StatCard icon={Clock}     label="Late Submissions" value={stats.late ?? 0}          highlight={stats.late > 0 ? "warning" : "success"} />
+          </StatRow>
+
+          {/* ── Filter pills + search ─────────────────────────── */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
+            <FilterPill label="All"     count={counts.all}     active={filter === "all"}     onClick={() => setFilter("all")}     color={colors.teal} />
+            <FilterPill label="Missing" count={counts.missing} active={filter === "missing"} onClick={() => setFilter("missing")} color={colors.danger} />
+            <FilterPill label="Late"    count={counts.late}    active={filter === "late"}    onClick={() => setFilter("late")}    color={colors.warning} />
+            <FilterPill label="Early"   count={counts.early}   active={filter === "early"}   onClick={() => setFilter("early")}   color="#7C3AED" />
+            <FilterPill label="On-time" count={counts.on_time} active={filter === "on_time"} onClick={() => setFilter("on_time")} color={colors.success} />
+            <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+              <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name or client…"
+                style={{
+                  paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                  border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                  fontSize: font.sm, fontFamily: font.family, outline: "none",
+                  background: colors.surface, color: colors.textPrimary, width: 200,
+                }}
+                onFocus={e => e.target.style.borderColor = colors.teal}
+                onBlur={e  => e.target.style.borderColor = colors.border}
+              />
+            </div>
+          </div>
+
+          {/* ── Table ─────────────────────────────────────────── */}
+          {filtered.length === 0 ? (
+            <StatusBox variant="info">
+              {filter === "all"
+                ? `No report data for ${data?.date || date}.`
+                : `No ${filter.replace("_", "-")} records for ${data?.date || date}.`}
+            </StatusBox>
+          ) : (
+            <Card noPadding style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+                <thead>
+                  <tr style={{ background: colors.surfaceAlt }}>
+                    <th style={th}>Name</th>
+                    <th style={th}>Client</th>
+                    <th style={{ ...th, textAlign: "center" }}>Community</th>
+                    <th style={th}>Clock In</th>
+                    <th style={th}>Punctuality</th>
+                    <th style={th}>Clock Out</th>
+                    <th style={th}>Submission</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((r, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
+                      <td style={{ ...td, fontWeight: 600, color: colors.textPrimary }}>
+                        {r.va_name}
+                        {r.needs_verification && (
+                          <span title="Client name needs verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
+                        )}
+                      </td>
+                      <td style={td}>{r.client || "—"}</td>
+                      <td style={{ ...td, textAlign: "center" }}>
+                        <CommunityBadge community={r.community} />
+                      </td>
+                      <td style={td}>
+                        {r.clock_in
+                          ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
+                          : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>}
+                      </td>
+                      <td style={td}>
+                        <StatusCell
+                          status={r.clock_in_status}
+                          minutesLate={r.clock_in_minutes_late}
+                          minutesEarly={r.clock_in_minutes_early}
+                        />
+                      </td>
+                      <td style={td}>
+                        {r.clock_out
+                          ? <span style={{ fontWeight: 500 }}>{r.clock_out.replace(" EST", "")}</span>
+                          : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>}
+                      </td>
+                      <td style={td}>
+                        <StatusCell
+                          status={r.clock_out_status}
+                          minutesLate={r.clock_out_minutes_late}
+                          minutesEarly={r.clock_out_minutes_early}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 // ── Root ──────────────────────────────────────────────────────────
 export default function VirtualAssistants() {
   const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
   const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
-  const [activeTab, setActiveTab] = useState("active");
+  const [activeTab, setActiveTab] = useState("reports");
   const [selected,  setSelected]  = useState(null);
 
   useEffect(() => {
@@ -589,8 +908,7 @@ export default function VirtualAssistants() {
 
   const cbaMultiple = vas.filter(v => v.community === "CBA" && (v.contract_ids?.length ?? 0) > 1);
 
-  // EOD and Attendance tabs have their own self-contained UI
-  const isReportTab = activeTab === "eod" || activeTab === "attendance";
+  const isReportTab = activeTab === "reports";
 
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
@@ -625,8 +943,7 @@ export default function VirtualAssistants() {
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       {/* EOD & Attendance tabs */}
-      {activeTab === "eod"        && <EODTab />}
-      {activeTab === "attendance" && <AttendanceTab />}
+      {activeTab === "reports"    && <ReportsTab />}
 
       {/* Directory tabs */}
       {!isReportTab && (

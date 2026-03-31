@@ -8,6 +8,7 @@ export const CACHE_KEYS = {
   VA_LIST   : "va:list",
   EOW_ALL   : "eow:all",
   EOW_VA    : "eow:va",
+  REPORT  : "report:data",
 };
 
 // ── Core helpers ──────────────────────────────────────────────────

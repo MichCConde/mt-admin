@@ -7,9 +7,12 @@ from app.config import settings
 from app.notion import (
     get_active_vas, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    get_all_active_contracts_by_va_id, va_works_on_date,
-    match_client_name,
+    va_works_on_date,
+    get_active_contracts_by_id,
     EST,
+)
+from app.routers.eod import (
+    _build_report_row, _fuzzy_find_eod, _fuzzy_find_clockin,
 )
 
 router = APIRouter()
@@ -35,220 +38,231 @@ def send_email(subject: str, html_body: str):
         server.sendmail(settings.email_sender, settings.email_recipient_list, msg.as_string())
 
 
-# ── Core report builder ───────────────────────────────────────────
+# ── Build report data (same logic as /api/eod/report) ─────────────
 
-def build_missing_report(date_str: str) -> dict:
-    vas             = get_active_vas()
-    contracts_by_va = get_all_active_contracts_by_va_id()
-    attendance      = get_attendance_for_date(date_str)
-    eod_main        = get_eod_main_for_date(date_str)
-    eod_cba         = get_eod_cba_for_date(date_str)
+def _build_report(date_str: str) -> dict:
+    """
+    Build the combined report data using the same contract-anchored
+    approach as the /report endpoint. Returns stats + categorised rows.
+    """
+    vas        = get_active_vas()
+    attendance = get_attendance_for_date(date_str)
+    eod_main   = get_eod_main_for_date(date_str)
+    eod_cba    = get_eod_cba_for_date(date_str)
 
-    # Build lookup by both full_name (new format) and last_name (old format)
+    contracts_by_id = get_active_contracts_by_id()
+
+    # Index attendance
     name_to_clockins: dict[str, list] = {}
     for a in attendance:
         name_to_clockins.setdefault(a["full_name"], []).append(a)
         if a["last_name"] != a["full_name"]:
             name_to_clockins.setdefault(a["last_name"], []).append(a)
 
-    main_idx: dict[str, list] = {}
+    # Index EOD
+    main_eod_by_va: dict[str, list] = {}
     for r in eod_main:
-        main_idx.setdefault(r["name"].lower(), []).append(r)
+        main_eod_by_va.setdefault(r["name"].lower(), []).append(r)
 
-    cba_idx: dict[tuple, list] = {}
+    cba_eod_by_va: dict[str, list] = {}
     for r in eod_cba:
-        cba_idx.setdefault((r["name"].lower(), r["client"].lower()), []).append(r)
+        cba_eod_by_va.setdefault(r["name"].lower(), []).append(r)
 
-    missing, submitted = [], []
+    # Expected start times
+    eod_time_in: dict[str, str] = {}
+    for r in [*eod_main, *eod_cba]:
+        k = r["name"].strip().lower()
+        l = k.split()[-1]
+        if r.get("time_in"):
+            eod_time_in.setdefault(k, r["time_in"])
+            eod_time_in.setdefault(l, r["time_in"])
+
+    shift_lookup: dict[str, str] = {}
+    for va in vas:
+        k  = va["name"].strip().lower()
+        l  = k.split()[-1]
+        st = va.get("shift_time", "")
+        if st:
+            shift_lookup.setdefault(k, st)
+            shift_lookup.setdefault(l, st)
+
     working_vas = [va for va in vas if va_works_on_date(va, date_str)]
+    rows = []
 
     for va in working_vas:
-        key      = va["name"].strip().lower()
-        va_last  = va["name"].strip().split()[-1].lower()
-        # Try full name first (new format), fall back to last name (old format)
-        va_clockins = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
-        clocked_in  = len(va_clockins) > 0
-        community   = va.get("community", "")
+        key     = va["name"].strip().lower()
+        va_last = key.split()[-1]
+        va_cis  = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
+        comm    = va.get("community", "")
+        exp     = (eod_time_in.get(key) or eod_time_in.get(va_last)
+                   or shift_lookup.get(key) or shift_lookup.get(va_last, ""))
 
-        if community == "Main":
-            if main_idx.get(key):
-                submitted.extend(main_idx[key])
-            else:
-                missing.append({
-                    **va,
-                    "clocked_in":         clocked_in,
-                    "missing_client":     None,
-                    "missing_type":       "eod_only" if clocked_in else "clock_in_only",
-                    "needs_verification": False,
-                })
+        va_eod_list = eod_source.get(key, [])
+        if not va_eod_list:
+            for eod_name, eod_records in eod_source.items():
+                if _names_match(key, eod_name):
+                    va_eod_list = eod_records
+                    break
 
-        elif community == "CBA":
-            contracts = contracts_by_va.get(va["id"], [])
-            if not contracts:
-                reports = [r for r in eod_cba if r["name"].lower() == key]
-                if reports:
-                    submitted.extend(reports)
-                else:
-                    missing.append({
-                        **va,
-                        "clocked_in":         clocked_in,
-                        "missing_client":     None,
-                        "missing_type":       "eod_only" if clocked_in else "clock_in_only",
-                        "needs_verification": False,
-                    })
-                continue
+        active_contracts = [
+            contracts_by_id[cid]
+            for cid in va.get("contract_ids", [])
+            if cid in contracts_by_id
+        ]
 
-            for contract in contracts:
-                client_key = contract["client_name"].lower()
+        if not active_contracts:
+            ci  = va_cis[0] if va_cis else None
+            eod = va_eod_list[0] if va_eod_list else None
+            rows.append(_build_report_row(va, None, comm, ci, eod, exp, False))
+        else:
+            for con in active_contracts:
+                con_client = con["client_name"]
+                con_ci, ci_nv = _fuzzy_find_clockin(va_cis, con_client)
+                con_eod, eod_nv = _fuzzy_find_eod(va_eod_list, con_client)
+                rows.append(_build_report_row(
+                    va, con_client, comm, con_ci, con_eod, exp, ci_nv or eod_nv
+                ))
 
-                # Per-contract clock-in with fuzzy match
-                contract_clocked_in = False
-                needs_verification  = False
-                for ci in va_clockins:
-                    is_match, needs_v = match_client_name(
-                        ci.get("client", ""), contract["client_name"]
-                    )
-                    if is_match:
-                        contract_clocked_in = True
-                        needs_verification  = needs_v
-                        break
+    clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
 
-                if cba_idx.get((key, client_key)):
-                    submitted.extend(cba_idx[(key, client_key)])
-                else:
-                    missing.append({
-                        **va,
-                        "clocked_in":         contract_clocked_in,
-                        "missing_client":     contract["client_name"],
-                        "missing_type":       "eod_only" if contract_clocked_in else "clock_in_only",
-                        "needs_verification": needs_verification,
-                    })
-
-    late = [r for r in submitted if not r.get("punctuality", {}).get("on_time", True)]
-    no_clock_in = [
-        va for va in working_vas
-        if not (
-            name_to_clockins.get(va["name"].strip().lower()) or
-            name_to_clockins.get(va["name"].strip().split()[-1].lower())
-        )
-    ]
+    missing = [r for r in rows if r["status"] == "missing"]
+    late    = [r for r in rows if r["status"] == "late"]
+    on_time = [r for r in rows if r["status"] == "on_time"]
 
     return {
-        "date":             date_str,
-        "total_vas":        len(working_vas),
-        "submitted_count":  len(submitted),
-        "clocked_in_count": len(attendance),
-        "missing":          missing,
-        "late":             late,
-        "no_clock_in":      no_clock_in,
+        "date":        date_str,
+        "rows":        rows,
+        "missing":     missing,
+        "late":        late,
+        "on_time":     on_time,
+        "stats": {
+            "active_vas":    len(working_vas),
+            "clocked_in":    len(clocked_names),
+            "eod_submitted": sum(1 for r in rows if r["clock_out_status"] != "missing"),
+            "missing_eod":   sum(1 for r in rows if r["clock_out_status"] == "missing"),
+            "late":          len(late),
+        },
     }
 
 
-# ── HTML email template ───────────────────────────────────────────
+# ── HTML email builder ────────────────────────────────────────────
+
+def _status_color(status: str) -> str:
+    return {"on_time": "#059669", "late": "#D97706", "missing": "#DC2626"}.get(status, "#6B7280")
+
+
+def _status_label(status: str, minutes_late: int) -> str:
+    if status == "missing":
+        return '<span style="color:#DC2626;font-weight:700;">Missing</span>'
+    if status == "late":
+        return f'<span style="color:#D97706;font-weight:700;">{minutes_late}m late</span>'
+    return '<span style="color:#059669;font-weight:700;">On-time</span>'
+
+
+def _comm_badge(community: str) -> str:
+    c = {"Main": "#1D4ED8", "CBA": "#C2410C"}.get(community, "#6B7280")
+    return f'<span style="background:{c};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;">{community}</span>'
+
+
+def _table_html(title: str, title_color: str, border_color: str, bg_color: str, rows: list) -> str:
+    """Build an HTML table section for a group of report rows."""
+    if not rows:
+        return ""
+
+    th = "padding:8px 12px;text-align:left;font-size:10px;font-weight:700;color:#6B7280;text-transform:uppercase;letter-spacing:0.05em;border-bottom:2px solid #E2E8F0;"
+    td = "padding:8px 12px;font-size:12px;color:#374151;border-bottom:1px solid #F3F4F6;"
+
+    body_rows = ""
+    for i, r in enumerate(rows):
+        row_bg = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
+        client = r["client"] or "—"
+        ci_time = r["clock_in"].replace(" EST", "") if r["clock_in"] else "Missing"
+        ci_color = _status_color(r["clock_in_status"])
+        co_time = r["clock_out"].replace(" EST", "") if r["clock_out"] else "Missing"
+        co_color = _status_color(r["clock_out_status"])
+        verify  = ' <span style="color:#D97706;font-weight:800;">*</span>' if r.get("needs_verification") else ""
+
+        body_rows += f"""
+        <tr style="background:{row_bg};">
+          <td style="{td}font-weight:600;color:#0D1F3C;">{r["va_name"]}{verify}</td>
+          <td style="{td}">{client}</td>
+          <td style="{td}text-align:center;">{_comm_badge(r["community"])}</td>
+          <td style="{td}color:{ci_color};">{ci_time}</td>
+          <td style="{td}">{_status_label(r["clock_in_status"], r["clock_in_minutes_late"])}</td>
+          <td style="{td}color:{co_color};">{co_time}</td>
+          <td style="{td}">{_status_label(r["clock_out_status"], r["clock_out_minutes_late"])}</td>
+        </tr>"""
+
+    return f"""
+    <div style="margin-bottom:24px;">
+      <div style="background:{bg_color};border:1.5px solid {border_color};border-radius:10px;overflow:hidden;">
+        <div style="padding:12px 16px;border-bottom:1px solid {border_color};">
+          <strong style="color:{title_color};font-size:14px;">{title}</strong>
+        </div>
+        <table style="width:100%;border-collapse:collapse;">
+          <thead>
+            <tr style="background:#F9FAFB;">
+              <th style="{th}">Name</th>
+              <th style="{th}">Client</th>
+              <th style="{th}text-align:center;">Comm</th>
+              <th style="{th}">Clock In</th>
+              <th style="{th}">Punctuality</th>
+              <th style="{th}">Clock Out</th>
+              <th style="{th}">Submission</th>
+            </tr>
+          </thead>
+          <tbody>{body_rows}</tbody>
+        </table>
+      </div>
+    </div>"""
+
 
 def build_html_email(report: dict) -> str:
     date_label = datetime.strptime(report["date"], "%Y-%m-%d").strftime("%A, %B %d, %Y")
+    stats      = report["stats"]
     missing    = report["missing"]
     late       = report["late"]
-    no_clock   = report["no_clock_in"]
-    all_clear  = not missing and not late and not no_clock
+    all_clear  = not missing and not late
 
-    def community_badge(va):
-        community   = va.get("community", "")
-        badge_color = {"Main": "#1D4ED8", "CBA": "#C2410C"}.get(community, "#6B7280")
-        return f'<span style="background:{badge_color};color:#fff;border-radius:4px;padding:2px 8px;font-size:11px;font-weight:700;margin-right:8px;">{community}</span>'
-
-    def missing_type_tag(va):
-        t    = va.get("missing_type", "clock_in_only")
-        flag = ' <span style="color:#D97706;font-weight:800;" title="Client name needs verification">*</span>' \
-               if va.get("needs_verification") else ""
-        if t == "eod_only":
-            return f'<span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✓ Clocked in · No EOD</span>{flag}'
-        return f'<span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">✗ No clock-in · No EOD</span>{flag}'
-
-    def missing_row(va):
-        client_note = f' <span style="color:#6B7280;font-size:12px;">— {va["missing_client"]}</span>' if va.get("missing_client") else ""
+    # Stat pill helper
+    def stat(value, label, color):
         return f"""
-        <tr>
-          <td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">
-            {community_badge(va)}<strong>{va['name']}</strong>{client_note}{missing_type_tag(va)}
-          </td>
-        </tr>"""
+        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
+          <div style="font-size:24px;font-weight:800;color:{color};">{value}</div>
+          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">{label}</div>
+        </div>"""
 
-    def late_row(r):
-        return f"""
-        <tr>
-          <td style="padding:10px 16px;border-bottom:1px solid #FDE68A;">
-            <strong>{r['name']}</strong>
-            {f'<span style="color:#6B7280;font-size:12px;margin-left:6px;">{r.get("client","")}</span>' if r.get("client") else ""}
-            <span style="background:#FEF3C7;color:#D97706;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:8px;">
-              Submitted {r['punctuality']['submitted_est']} — {r['punctuality']['minutes_late']}m late
-            </span>
-          </td>
-        </tr>"""
+    stats_html = f"""
+      <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
+        {stat(stats["active_vas"],    "ACTIVE VAs",    "#0D1F3C")}
+        {stat(stats["clocked_in"],    "CLOCKED IN",    "#0CB8A9")}
+        {stat(stats["eod_submitted"], "EOD SUBMITTED", "#059669")}
+        {stat(stats["missing_eod"],   "MISSING EOD",   "#DC2626" if stats["missing_eod"] else "#059669")}
+        {stat(stats["late"],          "LATE",           "#D97706" if stats["late"] else "#059669")}
+      </div>"""
 
-    def no_clock_row(va, i):
-        bg = "#FFF8F8" if i % 2 == 0 else "#FFF2F2"
-        return f"""
-        <tr style="background:{bg};">
-          <td style="padding:10px 16px;border-bottom:1px solid #FEE2E2;">
-            {community_badge(va)}<strong>{va['name']}</strong>
-            <span style="background:#F3F4F6;color:#6B7280;border-radius:4px;padding:2px 7px;font-size:11px;font-weight:700;margin-left:6px;">No clock-in recorded</span>
-          </td>
-        </tr>"""
-
-    all_clear_section = """
+    all_clear_html = """
       <div style="background:#ECFDF5;border:1.5px solid #A7F3D0;border-radius:10px;padding:16px 20px;text-align:center;">
         <div style="font-size:18px;font-weight:800;color:#059669;">✓ All Clear</div>
         <div style="font-size:13px;color:#6B7280;margin-top:4px;">All VAs submitted their EOD reports on time.</div>
       </div>""" if all_clear else ""
 
-    missing_section = ""
-    if missing:
-        eod_only     = [v for v in missing if v.get("missing_type") == "eod_only"]
-        both_missing = [v for v in missing if v.get("missing_type") != "eod_only"]
-        rows = "".join(missing_row(va) for va in missing)
-        missing_section = f"""
-        <div style="margin-bottom:24px;">
-          <div style="background:#FEF2F2;border:1.5px solid #FECACA;border-radius:10px;overflow:hidden;">
-            <div style="background:#FFF5F5;padding:12px 16px;border-bottom:1px solid #FECACA;display:flex;justify-content:space-between;align-items:center;">
-              <strong style="color:#DC2626;font-size:14px;">⚠ {len(missing)} Missing EOD Report{"s" if len(missing)!=1 else ""}</strong>
-              <span style="font-size:11px;color:#6B7280;">{len(eod_only)} clocked in · {len(both_missing)} no clock-in</span>
-            </div>
-            <table style="width:100%;border-collapse:collapse;">{rows}</table>
-          </div>
-        </div>"""
+    missing_html = _table_html(
+        title=f"⚠ {len(missing)} Missing Report{'s' if len(missing) != 1 else ''}",
+        title_color="#DC2626", border_color="#FECACA", bg_color="#FEF2F2",
+        rows=missing,
+    )
 
-    late_section = ""
-    if late:
-        rows = "".join(late_row(r) for r in late)
-        late_section = f"""
-        <div style="margin-bottom:24px;">
-          <div style="background:#FFFBEB;border:1.5px solid #FDE68A;border-radius:10px;overflow:hidden;">
-            <div style="background:#FFFDF0;padding:12px 16px;border-bottom:1px solid #FDE68A;">
-              <strong style="color:#D97706;font-size:14px;">⏱ {len(late)} Late Submission{"s" if len(late)!=1 else ""}</strong>
-            </div>
-            <table style="width:100%;border-collapse:collapse;">{rows}</table>
-          </div>
-        </div>"""
-
-    no_clock_section = ""
-    if no_clock:
-        rows = "".join(no_clock_row(va, i) for i, va in enumerate(no_clock))
-        no_clock_section = f"""
-        <div style="margin-bottom:24px;">
-          <div style="background:#F9FAFB;border:1.5px solid #E5E7EB;border-radius:10px;overflow:hidden;">
-            <div style="background:#F3F4F6;padding:12px 16px;border-bottom:1px solid #E5E7EB;">
-              <strong style="color:#374151;font-size:14px;">🔔 {len(no_clock)} VA{"s" if len(no_clock)!=1 else ""} with No Clock-in</strong>
-            </div>
-            <table style="width:100%;border-collapse:collapse;">{rows}</table>
-          </div>
-        </div>"""
+    late_html = _table_html(
+        title=f"⏱ {len(late)} Late Submission{'s' if len(late) != 1 else ''}",
+        title_color="#D97706", border_color="#FDE68A", bg_color="#FFFBEB",
+        rows=late,
+    )
 
     return f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#F2F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
-  <div style="max-width:600px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
+  <div style="max-width:700px;margin:32px auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.08);">
     <div style="background:#0D1F3C;padding:24px 32px;">
       <div style="font-size:20px;font-weight:800;color:#fff;">MT Admin</div>
       <div style="font-size:12px;color:#4A6080;margin-top:2px;">Daily EOD Report</div>
@@ -257,32 +271,10 @@ def build_html_email(report: dict) -> str:
       <div style="font-size:14px;font-weight:700;color:#fff;">{date_label}</div>
     </div>
     <div style="padding:28px 32px;">
-      <div style="display:flex;gap:10px;margin-bottom:28px;flex-wrap:wrap;">
-        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:24px;font-weight:800;color:#0D1F3C;">{report["total_vas"]}</div>
-          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">ACTIVE VAs</div>
-        </div>
-        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:24px;font-weight:800;color:#0CB8A9;">{report["clocked_in_count"]}</div>
-          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">CLOCKED IN</div>
-        </div>
-        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:24px;font-weight:800;color:#059669;">{report["submitted_count"]}</div>
-          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">EOD SUBMITTED</div>
-        </div>
-        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:24px;font-weight:800;color:{"#DC2626" if missing else "#059669"};">{len(missing)}</div>
-          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">MISSING EOD</div>
-        </div>
-        <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
-          <div style="font-size:24px;font-weight:800;color:{"#D97706" if late else "#059669"};">{len(late)}</div>
-          <div style="font-size:10px;font-weight:700;color:#6B7280;margin-top:3px;">LATE</div>
-        </div>
-      </div>
-      {all_clear_section}
-      {missing_section}
-      {late_section}
-      {no_clock_section}
+      {stats_html}
+      {all_clear_html}
+      {missing_html}
+      {late_html}
     </div>
     <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;">
       <div style="font-size:12px;color:#9CA3AF;">
@@ -300,15 +292,14 @@ def build_html_email(report: dict) -> str:
 @router.post("/send-morning-report")
 def send_morning_report():
     try:
-        from datetime import datetime
         yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
-        report    = build_missing_report(yesterday)
+        report    = _build_report(yesterday)
 
-        total_issues = len(report["missing"]) + len(report["late"]) + len(report["no_clock_in"])
+        total_issues = len(report["missing"]) + len(report["late"])
         subject = (
             f"[MT Admin] ✓ All Clear — {yesterday}"
             if total_issues == 0 else
-            f"[MT Admin] {total_issues} Issue{'s' if total_issues!=1 else ''} — EOD Report {yesterday}"
+            f"[MT Admin] {total_issues} Issue{'s' if total_issues != 1 else ''} — EOD Report {yesterday}"
         )
         send_email(subject, build_html_email(report))
         return {
@@ -316,9 +307,8 @@ def send_morning_report():
             "date":       yesterday,
             "recipients": settings.email_recipient_list,
             "summary": {
-                "missing":     len(report["missing"]),
-                "late":        len(report["late"]),
-                "no_clock_in": len(report["no_clock_in"]),
+                "missing": len(report["missing"]),
+                "late":    len(report["late"]),
             },
         }
     except Exception as e:
@@ -328,12 +318,12 @@ def send_morning_report():
 @router.post("/send-report/{date}")
 def send_report_for_date(date: str):
     try:
-        report  = build_missing_report(date)
-        total   = len(report["missing"]) + len(report["late"])
+        report = _build_report(date)
+        total  = len(report["missing"]) + len(report["late"])
         subject = (
             f"[MT Admin] ✓ All Clear — {date}"
             if total == 0 else
-            f"[MT Admin] {total} Issue{'s' if total!=1 else ''} — EOD Report {date}"
+            f"[MT Admin] {total} Issue{'s' if total != 1 else ''} — EOD Report {date}"
         )
         send_email(subject, build_html_email(report))
         return {"sent": True, "date": date}

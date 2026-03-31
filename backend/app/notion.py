@@ -1,5 +1,6 @@
 from notion_client import Client
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 import re
 from app.config import settings
 
@@ -13,16 +14,10 @@ DB = {
     "contracts":  settings.contracts_db_id,
 }
 
-EST             = timezone(timedelta(hours=-5))
+EST             = ZoneInfo("America/New_York")
 PHT             = timezone(timedelta(hours=+8))
 GRACE_MINUTES   = 15
 EOD_CUTOFF_HOUR = 18
-
-# ── Timezone notes ────────────────────────────────────────────────
-# Notion API always returns created_time / last_edited_time in UTC.
-# The Notion workspace UI displays these in PHT (UTC+8) for PH-based users.
-# We always convert UTC -> EST (UTC-5) for display in this app.
-# Text fields (Time In, Time Out, Shift Time) are typed by VAs in EST.
 
 
 # ── Property extractor ────────────────────────────────────────────
@@ -54,6 +49,51 @@ def get_prop(page: dict, name: str):
         return ""
     return ""
 
+# ── Helper: read Client property regardless of trailing space ─────
+
+_UUID_RE = re.compile(r'^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$', re.IGNORECASE)
+
+
+def _get_contract_client(page: dict) -> str:
+    """
+    Read the client name from a Contract page.
+
+    Handles multiple property types and edge cases:
+    - Text/rich_text: returns the value directly
+    - Relation: returns page IDs (not useful) → falls through to Contract Name
+    - Rollup (array of title/rich_text): joins the values
+    - Rollup (unhandled item types): returns [] → falls through to Contract Name
+    - Property name with or without trailing space
+
+    Final fallback: parse client name from Contract Name field,
+    which uses the format "PREFIX | Client Name" (e.g. "GJL | Donald Gray").
+    """
+    # ── Try reading the Client property directly ──────────────────
+    val = get_prop(page, "Client ") or get_prop(page, "Client")
+
+    # Flatten lists (from relation or rollup)
+    if isinstance(val, list):
+        # Filter out page IDs — they aren't human-readable names
+        names = [str(v).strip() for v in val if not _UUID_RE.match(str(v).strip())]
+        val = " ".join(names).strip() if names else ""
+    else:
+        val = str(val).strip()
+
+    # If we got a single UUID (relation page ID), discard it
+    if val and _UUID_RE.match(val):
+        val = ""
+
+    # ── Fallback: extract from Contract Name ──────────────────────
+    # Contract Name format: "GJL | Donald Gray" → "Donald Gray"
+    if not val:
+        cn = get_prop(page, "Contract Name")
+        if isinstance(cn, list):
+            cn = " ".join(str(v) for v in cn)
+        cn = str(cn).strip()
+        if "|" in cn:
+            val = cn.split("|", 1)[1].strip()
+
+    return val
 
 def query_all(database_id: str, filter_obj: dict = None) -> list:
     results, cursor = [], None
@@ -85,14 +125,14 @@ def to_est(iso_str: str) -> datetime:
 # ── Time-string parser ────────────────────────────────────────────
 
 def parse_time_str(time_str: str):
-    """
-    Parse a freeform time string like '9:00 AM EST', '17:00', '5PM'
-    into (hour_24, minute). Returns None if unparseable.
-    """
+    """Parse a freeform time string like '9:00 AM EST', '3:00PM', '5PM' into (hour_24, minute)."""
     if not time_str:
         return None
     clean = time_str.upper()
+    # Strip timezone suffixes
     clean = re.sub(r'\s*(EST|CST|PST|EDT|CDT|UTC)\s*', '', clean).strip()
+    # Normalize: insert space before AM/PM if missing ("3:00PM" → "3:00 PM")
+    clean = re.sub(r'(\d)(AM|PM)', r'\1 \2', clean)
 
     for fmt in ("%I:%M %p", "%I %p", "%H:%M", "%H"):
         try:
@@ -114,16 +154,26 @@ def eod_punctuality(submitted_at: str, time_out_str: str) -> dict:
     else:
         cutoff_h, cutoff_m = EOD_CUTOFF_HOUR, 0
 
-    cutoff   = submitted_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
-    deadline = cutoff + timedelta(minutes=GRACE_MINUTES)
-    on_time  = submitted_est <= deadline
-    minutes_late = max(0, int((submitted_est - deadline).total_seconds() / 60))
+    cutoff         = submitted_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
+    late_deadline   = cutoff + timedelta(minutes=GRACE_MINUTES)
+    early_boundary  = cutoff - timedelta(minutes=GRACE_MINUTES)
+
+    if submitted_est < early_boundary:
+        mins = int((early_boundary - submitted_est).total_seconds() / 60)
+        status, on_time, m_late, m_early = "early", False, 0, mins
+    elif submitted_est > late_deadline:
+        mins = int((submitted_est - late_deadline).total_seconds() / 60)
+        status, on_time, m_late, m_early = "late", False, mins, 0
+    else:
+        status, on_time, m_late, m_early = "on_time", True, 0, 0
 
     return {
         "on_time":       on_time,
+        "status":        status,
         "submitted_est": submitted_est.strftime("%I:%M %p EST"),
-        "expected_by":   deadline.strftime("%I:%M %p EST"),
-        "minutes_late":  minutes_late if not on_time else 0,
+        "expected_by":   cutoff.strftime("%I:%M %p EST"),
+        "minutes_late":  m_late,
+        "minutes_early": m_early,
     }
 
 
@@ -136,16 +186,26 @@ def clock_in_punctuality(created_at: str, time_in_str: str) -> dict:
     else:
         cutoff_h, cutoff_m = 9, 0
 
-    cutoff   = clocked_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
-    deadline = cutoff + timedelta(minutes=GRACE_MINUTES)
-    on_time  = clocked_est <= deadline
-    minutes_late = max(0, int((clocked_est - deadline).total_seconds() / 60))
+    cutoff         = clocked_est.replace(hour=cutoff_h, minute=cutoff_m, second=0, microsecond=0)
+    late_deadline   = cutoff + timedelta(minutes=GRACE_MINUTES)
+    early_boundary  = cutoff - timedelta(minutes=GRACE_MINUTES)
+
+    if clocked_est < early_boundary:
+        mins = int((early_boundary - clocked_est).total_seconds() / 60)
+        status, on_time, m_late, m_early = "early", False, 0, mins
+    elif clocked_est > late_deadline:
+        mins = int((clocked_est - late_deadline).total_seconds() / 60)
+        status, on_time, m_late, m_early = "late", False, mins, 0
+    else:
+        status, on_time, m_late, m_early = "on_time", True, 0, 0
 
     return {
         "on_time":        on_time,
+        "status":         status,
         "clocked_in_est": clocked_est.strftime("%I:%M %p EST"),
-        "expected_by":    deadline.strftime("%I:%M %p EST"),
-        "minutes_late":   minutes_late if not on_time else 0,
+        "expected_by":    cutoff.strftime("%I:%M %p EST"),
+        "minutes_late":   m_late,
+        "minutes_early":  m_early,
     }
 
 
@@ -225,20 +285,14 @@ def get_active_vas() -> list:
 # ── Contracts ─────────────────────────────────────────────────────
 
 def get_all_active_contracts_by_va_id() -> dict:
-    """
-    Query ALL active contracts grouped by VA page ID.
-    Used for EOD matching. Do NOT use for client count — use
-    len(va["contract_ids"]) from the VA DB instead.
-    """
     pages = query_all(DB["contracts"], {
         "property": "Contract Status",
         "select":   {"equals": "Active"},
     })
-
     result = {}
     for page in pages:
         va_ids      = get_prop(page, "VA")
-        client_name = get_prop(page, "Client ").strip()
+        client_name = _get_contract_client(page)          # ← changed
         contract    = {
             "contract_id":   page["id"],
             "client_name":   client_name,
@@ -246,7 +300,6 @@ def get_all_active_contracts_by_va_id() -> dict:
         }
         for va_id in va_ids:
             result.setdefault(va_id, []).append(contract)
-
     return result
 
 
@@ -263,11 +316,6 @@ def get_active_contract_id_set() -> set:
 
 
 def get_active_contracts_by_id() -> dict:
-    """
-    Returns a dict keyed by contract page ID for all Active contracts.
-    Used in list_vas to resolve client names from the VA's own
-    Contracts relation field.
-    """
     pages = query_all(DB["contracts"], {
         "property": "Contract Status",
         "select":   {"equals": "Active"},
@@ -275,7 +323,7 @@ def get_active_contracts_by_id() -> dict:
     return {
         page["id"]: {
             "contract_id":   page["id"],
-            "client_name":   get_prop(page, "Client ").strip(),
+            "client_name":   _get_contract_client(page),  # ← changed
             "contract_name": get_prop(page, "Contract Name"),
         }
         for page in pages
@@ -283,7 +331,6 @@ def get_active_contracts_by_id() -> dict:
 
 
 def get_active_contracts_for_va(contract_ids: list) -> list:
-    """Legacy per-VA lookup. Prefer get_all_active_contracts_by_va_id() for bulk use."""
     if not contract_ids:
         return []
     contracts = []
@@ -295,7 +342,7 @@ def get_active_contracts_for_va(contract_ids: list) -> list:
                 continue
             contracts.append({
                 "contract_id":   cid,
-                "client_name":   get_prop(page, "Client ").strip(),
+                "client_name":   _get_contract_client(page),  # ← changed
                 "contract_name": get_prop(page, "Contract Name"),
             })
         except Exception:
@@ -307,20 +354,35 @@ def get_active_contracts_for_va(contract_ids: list) -> list:
 
 def match_client_name(typed: str, actual: str) -> tuple:
     """
-    Match a VA-typed client name against the actual contract client name.
+    Match a VA-typed client name against an actual/expected client name.
     Returns (is_match, needs_verification).
 
-    Exact match            -> (True, False)
-    actual.startswith(typed) -> (True, True)   fuzzy, needs review
-    No match               -> (False, False)
+    Exact match                          -> (True, False)
+    Prefix match (either direction)      -> (True, True)   fuzzy, needs review
+    First-name match                     -> (True, True)   fuzzy, needs review
+    No match                             -> (False, False)
+
+    Examples:
+      ("Ryan Jones", "Ryan Jones")  -> (True, False)   exact
+      ("Ryan",       "Ryan Jones")  -> (True, True)    actual starts with typed
+      ("Ryan Jones", "Ryan")        -> (True, True)    typed starts with actual
+      ("Ryan J",     "Ryan Jones")  -> (True, True)    actual starts with typed
+      ("R. Jones",   "Ryan Jones")  -> (False, False)  no match
     """
     t = typed.strip().lower()
     a = actual.strip().lower()
-    if not t:
+    if not t or not a:
         return False, False
     if t == a:
         return True, False
-    if a.startswith(t):
+    # Prefix match — either direction
+    if a.startswith(t) or t.startswith(a):
+        return True, True
+    # First-name fallback: if the first word matches and at least
+    # one side is a single word (VA typed just the first name)
+    t_first = t.split()[0]
+    a_first = a.split()[0]
+    if t_first == a_first and (len(t.split()) == 1 or len(a.split()) == 1):
         return True, True
     return False, False
 
