@@ -84,6 +84,11 @@ def get_dashboard():
         main_vas = [v for v in vas if v.get("community") == "Main"]
         cba_vas  = [v for v in vas if v.get("community") == "CBA"]
 
+        no_contract_vas = [
+            v for v in cba_vas
+            if not any(cid in active_contract_ids for cid in v.get("contract_ids", []))
+        ]
+
         # ── CBA client distribution ───────────────────────────────
         # Count how many of a VA's linked contracts are Active.
         # Uses va["contract_ids"] (relation from VA DB) filtered against
@@ -120,9 +125,10 @@ def get_dashboard():
 
         return {
             "va_counts": {
-                "total": len(vas),
-                "main":  len(main_vas),
-                "cba":   len(cba_vas),
+                "total":       len(vas),
+                "main":        len(main_vas),
+                "cba":         len(cba_vas),
+                "no_contract": len(no_contract_vas), 
             },
             "cba_distribution": cba_distribution,
             "missing": {

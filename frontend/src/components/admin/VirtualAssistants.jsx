@@ -444,9 +444,17 @@ function AttendanceTab() {
   }
 
   const clockIns   = data?.clock_ins     ?? [];
-  const clockOuts  = data?.clock_outs    ?? [];
   const noRecord   = data?.no_record     ?? [];
   const lateIns    = data?.late_clock_ins ?? [];
+  const verifyCount = data?.verify_count ?? 0;
+
+  function clockInName(c) {
+    const name = c.va_name || c.raw_name;
+    const asterisk = c.needs_verification
+      ? <span title="Client name needs manual verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
+      : null;
+    return <>{name}{asterisk}</>;
+  }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -467,11 +475,25 @@ function AttendanceTab() {
       {data && (
         <>
           <StatRow>
-            <StatCard icon={Users}     label="Active VAs"    value={data.vas?.length ?? 0} />
-            <StatCard icon={UserCheck} label="Clocked In"    value={clockIns.length}    highlight="teal" />
-            <StatCard icon={Clock}     label="Late Clock-ins" value={lateIns.length}    highlight={lateIns.length > 0 ? "warning" : "success"} />
-            <StatCard icon={UserX}     label="No Record"     value={noRecord.length}    highlight={noRecord.length > 0 ? "danger" : "success"} />
+            <StatCard icon={Users}     label="Active VAs"     value={data.vas?.length ?? 0} />
+            <StatCard icon={UserCheck} label="Clocked In"     value={clockIns.length}    highlight="teal" />
+            <StatCard icon={Clock}     label="Late Clock-ins" value={lateIns.length}     highlight={lateIns.length > 0 ? "warning" : "success"} />
+            <StatCard icon={UserX}     label="No Record"      value={noRecord.length}    highlight={noRecord.length > 0 ? "danger" : "success"} />
           </StatRow>
+
+          {/* Verification warning pill */}
+          {verifyCount > 0 && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              background: colors.warningLight, border: `1.5px solid ${colors.warningBorder}`,
+              borderRadius: radius.md, padding: "8px 14px",
+            }}>
+              <AlertTriangle size={14} color={colors.warning} />
+              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.warning }}>
+                {verifyCount} clock-in{verifyCount !== 1 ? "s" : ""} need{verifyCount === 1 ? "s" : ""} client name verification (marked with *)
+              </span>
+            </div>
+          )}
 
           {noRecord.length > 0 && (
             <Card title={`No Clock-in Record — ${noRecord.length} VA${noRecord.length !== 1 ? "s" : ""}`} noPadding>
@@ -499,7 +521,9 @@ function AttendanceTab() {
                   borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
                   background: i % 2 === 0 ? colors.warningLight : "#FFFBEB",
                 }}>
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{c.raw_name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    {clockInName(c)}
+                  </span>
                   <StatusBadge variant="warning">
                     {c.punctuality?.clocked_in_est} · {c.punctuality?.minutes_late}m late
                   </StatusBadge>
@@ -517,26 +541,13 @@ function AttendanceTab() {
                   borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
                   background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
                 }}>
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{c.raw_name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    {clockInName(c)}
+                  </span>
                   <StatusBadge variant={c.punctuality?.on_time ? "success" : "warning"}>
                     {c.punctuality?.clocked_in_est}
                     {!c.punctuality?.on_time && ` · ${c.punctuality?.minutes_late}m late`}
                   </StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-
-          {clockOuts.length > 0 && (
-            <Card title={`Clock-outs — ${clockOuts.length}`} noPadding>
-              {clockOuts.map((c, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-                }}>
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{c.raw_name}</span>
                 </div>
               ))}
             </Card>

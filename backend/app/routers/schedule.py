@@ -46,8 +46,9 @@ def parse_shift_blocks(shift_time_str: str) -> list[dict]:
         # Extract optional client label in parens
         label_match = re.search(r'\(([^)]+)\)', seg)
         label = label_match.group(1).strip() if label_match else ""
+        seg_clean = re.sub(r'12\s*[Nn][Nn]', '12PM', seg_clean)
         seg_clean = re.sub(r'\([^)]+\)', '', seg).strip()
-
+        
         # Match time range pattern
         # Covers: "9:00AM-5:00PM", "9:00 AM - 5 PM", "9AM-5PM"
         pattern = (

@@ -154,10 +154,10 @@ export default function Dashboard() {
         <StatCard icon={UserCheck} label="Main Community"   value={va_counts.main}  highlight="teal" />
         <StatCard icon={UserCheck} label="CBA Community"    value={va_counts.cba}   highlight="teal" />
         <StatCard
-          icon={missing.count > 0 ? UserX : UserCheck}
-          label={`Missing Reports · ${fmtDate(missing.date)}`}
-          value={missing.count}
-          highlight={missing.count > 0 ? "danger" : "success"}
+          icon={UserX}
+          label="No Contract VAs"
+          value={va_counts.no_contract ?? 0}
+          highlight={(va_counts.no_contract ?? 0) > 0 ? "warning" : "success"}
         />
       </StatRow>
 

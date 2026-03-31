@@ -3,7 +3,7 @@ from app.notion import (
     get_active_vas, get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     get_all_active_contracts_by_va_id, va_works_on_date,
-    match_client_name,                              # ← 1. added import
+    match_client_name,
 )
 
 router = APIRouter()
@@ -18,10 +18,14 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
         eod_main        = get_eod_main_for_date(date)
         eod_cba         = get_eod_cba_for_date(date)
 
-        # ← 2. removed type/last_name filter, replaced with full_name lookup
+        # ── FIX 1: Index by both full_name AND last_name ─────────
+        # Old records parse to full_name="conde" (not "maria conde"),
+        # so we need last_name as a fallback key to match them.
         name_to_clockins: dict[str, list] = {}
         for a in attendance:
             name_to_clockins.setdefault(a["full_name"], []).append(a)
+            if a["last_name"] != a["full_name"]:   # avoid double-adding old records
+                name_to_clockins.setdefault(a["last_name"], []).append(a)
 
         main_idx: dict[str, list] = {}
         for r in eod_main:
@@ -37,9 +41,11 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             if not va_works_on_date(va, date):
                 continue
 
-            key        = va["name"].strip().lower()
-            va_clockins = name_to_clockins.get(key, [])
-            clocked_in  = len(va_clockins) > 0          # ← 3. full_name match
+            key         = va["name"].strip().lower()
+            # ── FIX 2: Try full_name first, fall back to last_name ──
+            va_last     = va["name"].strip().split()[-1].lower()
+            va_clockins = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
+            clocked_in  = len(va_clockins) > 0
             community   = va.get("community", "")
 
             if community == "Main":
@@ -82,7 +88,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     client_key = contract["client_name"].lower()
                     reports    = cba_idx.get((key, client_key), [])
 
-                    # ← 4. per-contract clock-in with fuzzy match
+                    # Per-contract clock-in with fuzzy match
                     contract_clocked_in = False
                     needs_verification  = False
                     for ci in va_clockins:
@@ -120,7 +126,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             "date":             date,
             "active_va_count":  len(vas),
             "submitted_count":  len(submitted_all),
-            "clocked_in_count": len(name_to_clockins),  # ← updated count source
+            "clocked_in_count": len(name_to_clockins),
             "missing_count":    len(missing),
             "late_count":       len(late),
             "eod_submissions":  submitted_all,

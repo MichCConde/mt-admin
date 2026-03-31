@@ -5,6 +5,7 @@ from app.notion import (
     get_active_vas, get_all_active_contracts_by_va_id,
     get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
+    match_client_name,                                  # ← added
     EST,
 )
 
@@ -31,8 +32,7 @@ def workdays_in_range(start: str, end: str) -> list[str]:
     return result
 
 
-def va_last_name(full_name: str) -> str:
-    return full_name.strip().split()[-1].lower()
+# va_last_name helper REMOVED — no longer needed
 
 
 def detect_keyword_flags(text: str) -> list[str]:
@@ -134,7 +134,7 @@ def get_eow_report(
 
         for va in vas:
             full_key  = va["name"].strip().lower()
-            last      = va_last_name(va["name"])
+            va_last   = full_key.split()[-1]              # ← replaces va_last_name()
             community = va.get("community", "")
             contracts = contracts_by_va.get(va["id"], []) if community == "CBA" else []
 
@@ -142,13 +142,17 @@ def get_eow_report(
             va_all_eod = []
 
             for d in workdays:
-                att        = week_attendance[d]
-                clock_ins  = [a for a in att if a["type"] == "IN"]
-                clocked_in = any(a["last_name"] == last for a in clock_ins)
+                att = week_attendance[d]
+
+                # ── Match attendance by full_name with last_name fallback ──
+                va_clockins = [
+                    a for a in att
+                    if a["full_name"] == full_key or a["last_name"] == va_last
+                ]
+                clocked_in  = len(va_clockins) > 0
 
                 clock_notes = " ".join(
-                    a.get("notes", "") for a in clock_ins
-                    if a["last_name"] == last
+                    a.get("notes", "") for a in va_clockins
                 )
 
                 if community == "Main":
@@ -179,6 +183,19 @@ def get_eow_report(
                     else:
                         for contract in contracts:
                             client_key = contract["client_name"].lower()
+
+                            # ── Per-contract clock-in with fuzzy match ──
+                            contract_clocked_in = False
+                            needs_verification  = False
+                            for ci in va_clockins:
+                                is_match, needs_v = match_client_name(
+                                    ci.get("client", ""), contract["client_name"]
+                                )
+                                if is_match:
+                                    contract_clocked_in = True
+                                    needs_verification  = needs_v
+                                    break
+
                             reports = [
                                 r for r in week_eod_cba[d]
                                 if r["name"].strip().lower() == full_key
@@ -186,12 +203,13 @@ def get_eow_report(
                             ]
                             va_all_eod.extend(reports)
                             daily.append({
-                                "date":          d,
-                                "clocked_in":    clocked_in,
-                                "eod_submitted": len(reports) > 0,
-                                "reports":       reports,
-                                "keyword_flags": list(set(detect_keyword_flags(clock_notes))),
-                                "client":        contract["client_name"],
+                                "date":               d,
+                                "clocked_in":         contract_clocked_in,
+                                "eod_submitted":      len(reports) > 0,
+                                "reports":            reports,
+                                "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
+                                "client":             contract["client_name"],
+                                "needs_verification": needs_verification,
                             })
 
             duplicates   = detect_duplicate_eod(va_all_eod)

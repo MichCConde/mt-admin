@@ -121,12 +121,15 @@ def inspect_va(
         attendance_by_date = _fetch_attendance_parallel(check_dates)
 
         # Find missing days: clocked in but no EOD submitted
+        # ── FIXED: use full_name / last_name instead of removed "type" field ──
+        va_lower = va_name.strip().lower()
+        va_last  = va_lower.split()[-1]
+
         missing_days = []
         for date_str in check_dates:
             attendance = attendance_by_date.get(date_str, [])
             clocked_in = any(
-                a["type"] == "IN" and
-                va_name.strip().lower() in a["raw_name"].strip().lower()
+                a["full_name"] == va_lower or a["last_name"] == va_last
                 for a in attendance
             )
             if clocked_in and date_str not in submitted_dates:
