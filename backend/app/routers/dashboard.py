@@ -3,9 +3,10 @@ from datetime import datetime, timedelta
 from app.notion import (
     get_active_vas_cached,
     get_all_active_contracts_by_va_id,
-    get_active_contract_id_set,          # ← new
+    get_active_contract_id_set,
     get_eod_main_for_date, get_eod_cba_for_date,
     va_works_on_date,
+    match_client_name,
     EST,
 )
 
@@ -13,25 +14,25 @@ router = APIRouter()
 
 
 def prev_workday(d: datetime, offset: int = 1) -> str:
-    """
-    Go back `offset` workdays (Mon–Sat) from d and return YYYY-MM-DD.
-    Skips Sunday since no VAs submit EOD reports on Sundays.
-    """
     current = d
     steps = 0
     while steps < offset:
         current = current - timedelta(days=1)
-        if current.weekday() != 6:   # 6 = Sunday
+        if current.weekday() != 6:
             steps += 1
     return current.strftime("%Y-%m-%d")
 
 
+def _names_match(va_name: str, eod_name: str) -> bool:
+    va  = va_name.strip().lower().split()
+    eod = eod_name.strip().lower().split()
+    if not va or not eod:
+        return False
+    return va[0] == eod[0] and va[-1] == eod[-1]
+
+
 def get_missing_for_date(vas: list, date_str: str,
                          contracts_by_va: dict) -> set[str]:
-    """
-    Returns a set of VA names (lowercased) who are missing EOD
-    reports for the given date, respecting each VA's work schedule.
-    """
     eod_main = get_eod_main_for_date(date_str)
     eod_cba  = get_eod_cba_for_date(date_str)
 
@@ -50,18 +51,32 @@ def get_missing_for_date(vas: list, date_str: str,
         community = va.get("community", "")
 
         if community == "Main":
-            if not main_idx.get(key):
+            found = main_idx.get(key)
+            if not found:
+                found = any(_names_match(key, r["name"]) for r in eod_main)
+            if not found:
                 missing.add(key)
 
         elif community == "CBA":
             contracts = contracts_by_va.get(va["id"], [])
             if not contracts:
-                if not any(r["name"].lower() == key for r in eod_cba):
+                found = any(
+                    r["name"].lower() == key or _names_match(key, r["name"])
+                    for r in eod_cba
+                )
+                if not found:
                     missing.add(key)
             else:
                 for contract in contracts:
                     client_key = contract["client_name"].lower()
-                    if not cba_idx.get((key, client_key)):
+                    if cba_idx.get((key, client_key)):
+                        continue
+                    found = any(
+                        (_names_match(key, r["name"]) or r["name"].lower() == key)
+                        and match_client_name(r.get("client", ""), contract["client_name"])[0]
+                        for r in eod_cba
+                    )
+                    if not found:
                         missing.add(key)
                         break
 
@@ -74,13 +89,9 @@ def get_dashboard():
         now  = datetime.now(tz=EST)
         vas  = get_active_vas_cached()
 
-        # contracts_by_va — used for EOD missing check (groups by VA ID from Contract side)
-        contracts_by_va = get_all_active_contracts_by_va_id()
-
-        # active_contract_ids — used for client COUNT (cross-ref VA's own relation field)
+        contracts_by_va     = get_all_active_contracts_by_va_id()
         active_contract_ids = get_active_contract_id_set()
 
-        # ── VA counts ─────────────────────────────────────────────
         main_vas = [v for v in vas if v.get("community") == "Main"]
         cba_vas  = [v for v in vas if v.get("community") == "CBA"]
 
@@ -89,11 +100,6 @@ def get_dashboard():
             if not any(cid in active_contract_ids for cid in v.get("contract_ids", []))
         ]
 
-        # ── CBA client distribution ───────────────────────────────
-        # Count how many of a VA's linked contracts are Active.
-        # Uses va["contract_ids"] (relation from VA DB) filtered against
-        # the active_contract_ids set — avoids relying on property name
-        # of the reverse relation on the Contract page.
         client_buckets: dict[int, list[str]] = {1: [], 2: [], 3: [], 4: []}
 
         for va in cba_vas:
@@ -112,7 +118,6 @@ def get_dashboard():
             {"label": "4+ Clients", "count": len(client_buckets[4]), "vas": client_buckets[4]},
         ]
 
-        # ── Missing reports — yesterday ───────────────────────────
         yesterday  = prev_workday(now, 1)
         day_before = prev_workday(now, 2)
 
@@ -128,7 +133,7 @@ def get_dashboard():
                 "total":       len(vas),
                 "main":        len(main_vas),
                 "cba":         len(cba_vas),
-                "no_contract": len(no_contract_vas), 
+                "no_contract": len(no_contract_vas),
             },
             "cba_distribution": cba_distribution,
             "missing": {

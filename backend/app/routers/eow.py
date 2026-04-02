@@ -2,10 +2,11 @@ from fastapi import APIRouter, Query, HTTPException
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from app.notion import (
-    get_active_vas, get_all_active_contracts_by_va_id,
+    get_active_vas,
     get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    match_client_name,                                  # ← added
+    get_active_contracts_by_id,
+    match_client_name,
     EST,
 )
 
@@ -21,18 +22,22 @@ CLIENT_ISSUE_KEYWORDS = [
 
 
 def workdays_in_range(start: str, end: str) -> list[str]:
-    """Return all Mon–Sat dates between start and end inclusive."""
     result  = []
     current = datetime.strptime(start, "%Y-%m-%d").date()
     end_d   = datetime.strptime(end,   "%Y-%m-%d").date()
     while current <= end_d:
-        if current.weekday() != 6:   # skip Sunday
+        if current.weekday() != 6:
             result.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
     return result
 
 
-# va_last_name helper REMOVED — no longer needed
+def _names_match(va_name: str, eod_name: str) -> bool:
+    va  = va_name.strip().lower().split()
+    eod = eod_name.strip().lower().split()
+    if not va or not eod:
+        return False
+    return va[0] == eod[0] and va[-1] == eod[-1]
 
 
 def detect_keyword_flags(text: str) -> list[str]:
@@ -43,10 +48,6 @@ def detect_keyword_flags(text: str) -> list[str]:
 
 
 def detect_duplicate_eod(reports: list[dict]) -> list[dict]:
-    """
-    Flags a report as a duplicate if all meaningful fields match a
-    previous day's report for the same VA + client.
-    """
     seen: dict[tuple, str] = {}
     flagged = []
     for r in sorted(reports, key=lambda x: x["date"]):
@@ -75,10 +76,6 @@ def detect_duplicate_eod(reports: list[dict]) -> list[dict]:
 # ── Parallel week fetcher ─────────────────────────────────────────
 
 def _fetch_day(date_str: str) -> tuple[str, list, list, list]:
-    """
-    Fetch all three data sources for one workday in a single thread.
-    Returns (date_str, attendance, eod_main, eod_cba).
-    """
     attendance = get_attendance_for_date(date_str)
     eod_main   = get_eod_main_for_date(date_str)
     eod_cba    = get_eod_cba_for_date(date_str)
@@ -86,18 +83,6 @@ def _fetch_day(date_str: str) -> tuple[str, list, list, list]:
 
 
 def fetch_week_data(workdays: list[str]) -> tuple[dict, dict, dict]:
-    """
-    Fetch attendance + EOD data for every workday in parallel using a
-    thread pool. Notion's client is synchronous, so we use threads
-    (not asyncio) to overlap the I/O wait.
-
-    For a 6-day week this reduces ~18 sequential Notion calls down to
-    the time of the single slowest call (~800ms instead of ~14 seconds).
-
-    max_workers=6 matches a typical Mon–Sat week. Notion allows up to
-    ~3 req/sec per integration token — 6 threads stays safely under that
-    since each thread is waiting on network I/O, not hammering back-to-back.
-    """
     week_attendance: dict[str, list] = {}
     week_eod_main:   dict[str, list] = {}
     week_eod_cba:    dict[str, list] = {}
@@ -113,6 +98,25 @@ def fetch_week_data(workdays: list[str]) -> tuple[dict, dict, dict]:
     return week_attendance, week_eod_main, week_eod_cba
 
 
+# ── Fuzzy EOD finders (per-day) ───────────────────────────────────
+
+def _find_va_eod_for_day(eod_list: list, full_key: str) -> list:
+    """Find all EOD records for a VA in a single day's EOD list, with fuzzy name fallback."""
+    exact = [r for r in eod_list if r["name"].strip().lower() == full_key]
+    if exact:
+        return exact
+    return [r for r in eod_list if _names_match(full_key, r["name"])]
+
+
+def _find_va_eod_for_client(va_eod_list: list, client_name: str):
+    """Find a single EOD record matching a specific client (fuzzy)."""
+    for r in va_eod_list:
+        is_match, _ = match_client_name(r.get("client", ""), client_name)
+        if is_match:
+            return r
+    return None
+
+
 # ── Route ─────────────────────────────────────────────────────────
 
 @router.get("")
@@ -121,22 +125,26 @@ def get_eow_report(
     end:   str = Query(..., description="YYYY-MM-DD — Saturday of the week"),
 ):
     try:
-        vas             = get_active_vas()
-        contracts_by_va = get_all_active_contracts_by_va_id()  # 1 bulk query
-        workdays        = workdays_in_range(start, end)
+        vas              = get_active_vas()
+        contracts_by_id  = get_active_contracts_by_id()
+        workdays         = workdays_in_range(start, end)
 
-        # ── Fetch all week data in parallel ───────────────────────
         week_attendance, week_eod_main, week_eod_cba = fetch_week_data(workdays)
 
-        # ── Build per-VA weekly summary ───────────────────────────
         va_summaries = []
         all_flags    = []
 
         for va in vas:
             full_key  = va["name"].strip().lower()
-            va_last   = full_key.split()[-1]              # ← replaces va_last_name()
+            va_last   = full_key.split()[-1]
             community = va.get("community", "")
-            contracts = contracts_by_va.get(va["id"], []) if community == "CBA" else []
+
+            # Resolve contracts from VA's own relation (same as /report)
+            active_contracts = [
+                contracts_by_id[cid]
+                for cid in va.get("contract_ids", [])
+                if cid in contracts_by_id
+            ]
 
             daily      = []
             va_all_eod = []
@@ -144,7 +152,7 @@ def get_eow_report(
             for d in workdays:
                 att = week_attendance[d]
 
-                # ── Match attendance by full_name with last_name fallback ──
+                # Match attendance by full_name with last_name fallback
                 va_clockins = [
                     a for a in att
                     if a["full_name"] == full_key or a["last_name"] == va_last
@@ -155,62 +163,52 @@ def get_eow_report(
                     a.get("notes", "") for a in va_clockins
                 )
 
-                if community == "Main":
-                    reports       = [r for r in week_eod_main[d] if r["name"].strip().lower() == full_key]
-                    eod_submitted = len(reports) > 0
-                    va_all_eod.extend(reports)
+                # Get this VA's EOD records for the day (fuzzy name match)
+                eod_source = week_eod_main[d] if community == "Main" else week_eod_cba[d]
+                va_day_eod = _find_va_eod_for_day(eod_source, full_key)
+
+                if not active_contracts:
+                    # No contracts — single row per day
+                    va_all_eod.extend(va_day_eod)
                     daily.append({
                         "date":          d,
                         "clocked_in":    clocked_in,
-                        "eod_submitted": eod_submitted,
-                        "reports":       reports,
+                        "eod_submitted": len(va_day_eod) > 0,
+                        "reports":       va_day_eod,
                         "keyword_flags": list(set(detect_keyword_flags(clock_notes))),
                         "client":        None,
                     })
+                else:
+                    # One entry per contract per day
+                    for con in active_contracts:
+                        con_client = con["client_name"]
 
-                elif community == "CBA":
-                    if not contracts:
-                        reports = [r for r in week_eod_cba[d] if r["name"].strip().lower() == full_key]
+                        # Per-contract clock-in (fuzzy)
+                        contract_clocked_in = False
+                        needs_verification  = False
+                        for ci in va_clockins:
+                            is_match, needs_v = match_client_name(
+                                ci.get("client", ""), con_client
+                            )
+                            if is_match:
+                                contract_clocked_in = True
+                                needs_verification  = needs_v
+                                break
+
+                        # Per-contract EOD (fuzzy)
+                        con_eod = _find_va_eod_for_client(va_day_eod, con_client)
+                        reports = [con_eod] if con_eod else []
                         va_all_eod.extend(reports)
+
                         daily.append({
-                            "date":          d,
-                            "clocked_in":    clocked_in,
-                            "eod_submitted": len(reports) > 0,
-                            "reports":       reports,
-                            "keyword_flags": list(set(detect_keyword_flags(clock_notes))),
-                            "client":        None,
+                            "date":               d,
+                            "clocked_in":         contract_clocked_in,
+                            "eod_submitted":      len(reports) > 0,
+                            "reports":            reports,
+                            "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
+                            "client":             con_client,
+                            "needs_verification": needs_verification,
                         })
-                    else:
-                        for contract in contracts:
-                            client_key = contract["client_name"].lower()
-
-                            # ── Per-contract clock-in with fuzzy match ──
-                            contract_clocked_in = False
-                            needs_verification  = False
-                            for ci in va_clockins:
-                                is_match, needs_v = match_client_name(
-                                    ci.get("client", ""), contract["client_name"]
-                                )
-                                if is_match:
-                                    contract_clocked_in = True
-                                    needs_verification  = needs_v
-                                    break
-
-                            reports = [
-                                r for r in week_eod_cba[d]
-                                if r["name"].strip().lower() == full_key
-                                and r.get("client", "").strip().lower() == client_key
-                            ]
-                            va_all_eod.extend(reports)
-                            daily.append({
-                                "date":               d,
-                                "clocked_in":         contract_clocked_in,
-                                "eod_submitted":      len(reports) > 0,
-                                "reports":            reports,
-                                "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
-                                "client":             contract["client_name"],
-                                "needs_verification": needs_verification,
-                            })
 
             duplicates   = detect_duplicate_eod(va_all_eod)
             missing_days = [e for e in daily if not e["eod_submitted"]]
@@ -218,7 +216,7 @@ def get_eow_report(
             all_kw_flags = list({f for e in daily for f in e["keyword_flags"]})
             unique_days  = list({e["date"] for e in daily})
 
-            contract_slots = max(len(contracts), 1) if community == "CBA" else 1
+            contract_slots = max(len(active_contracts), 1)
 
             va_summaries.append({
                 "va":             va,

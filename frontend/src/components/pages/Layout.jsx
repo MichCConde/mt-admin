@@ -14,6 +14,7 @@ import ActivityLogs       from "../admin/ActivityLogs";
 import { SoonBadge }      from "../ui/Indicators";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
 import { apiFetch, wakeBackend } from "../../api";
+import EomReports from "../admin/EomReports";
 
 import ErrorBoundary from "../ui/ErrorBoundary";
 import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/reportCache";
@@ -25,6 +26,7 @@ const NAV = [
   { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
   { id: "eow_reports",  icon: FileSpreadsheet, label: "EOW Reports",    sub: "End-of-week reports", component: EowReports },
   { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
+  { id: "eom_reports", icon: BarChart3, label: "EOM Reports", sub: "Monthly performance", component: EomReports },
 ];
 
 const NAV_SOON = [

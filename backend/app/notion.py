@@ -483,7 +483,7 @@ def get_eod_cba_for_date(date_str: str) -> list:
 
 def get_eod_for_va(va_name: str, community: str,
                    year: int, month: int) -> list:
-    """Fetch all EOD reports for a specific VA in a given month."""
+    """Fetch all EOD reports for a specific VA in a given month, including text fields for EOM."""
     pad        = lambda n: str(n).zfill(2)
     start_date = f"{year}-{pad(month)}-01"
     last_day   = (datetime(year, month % 12 + 1, 1) - timedelta(days=1)).day if month < 12 \
@@ -504,13 +504,22 @@ def get_eod_for_va(va_name: str, community: str,
     results = []
     for p in pages:
         r = _map_eod(p, community)
-        if community == "CBA":
+
+        # Text fields shared by both communities
+        r["daily_summary"] = get_prop(p, "Daily Summary").strip()
+
+        if community == "Main":
+            r["task_completed"] = get_prop(p, "Task Completed").strip()
+        elif community == "CBA":
             r.update({
-                "new_leads":    get_prop(p, "New Leads Sourced:"),
-                "email_apps":   get_prop(p, "Email Applications Sent:"),
-                "website_apps": get_prop(p, "Website Applications Sent:"),
-                "follow_ups":   get_prop(p, "Follow Ups Completed:"),
+                "new_leads":        get_prop(p, "New Leads Sourced:"),
+                "email_apps":       get_prop(p, "Email Applications Sent:"),
+                "website_apps":     get_prop(p, "Website Applications Sent:"),
+                "follow_ups":       get_prop(p, "Follow Ups Completed:"),
+                "total_responses":  get_prop(p, "Total Responses From Loads/Routes Today (attach company name):").strip(),
+                "other_admin":      get_prop(p, "Other Admin Tasks Completed:").strip(),
             })
+
         results.append(r)
 
     return sorted(results, key=lambda r: r["date"])
