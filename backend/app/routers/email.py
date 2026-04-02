@@ -7,12 +7,8 @@ from app.config import settings
 from app.notion import (
     get_active_vas, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
-    va_works_on_date,
-    get_active_contracts_by_id,
+    va_works_on_date, get_active_contracts_by_id,
     EST,
-)
-from app.routers.eod import (
-    _build_report_row, _fuzzy_find_eod, _fuzzy_find_clockin,
 )
 
 router = APIRouter()
@@ -38,13 +34,14 @@ def send_email(subject: str, html_body: str):
         server.sendmail(settings.email_sender, settings.email_recipient_list, msg.as_string())
 
 
-# ── Build report data (same logic as /api/eod/report) ─────────────
+# ── Build report data ─────────────────────────────────────────────
 
 def _build_report(date_str: str) -> dict:
-    """
-    Build the combined report data using the same contract-anchored
-    approach as the /report endpoint. Returns stats + categorised rows.
-    """
+    # Lazy import to avoid circular dependency (main.py loads both routers)
+    from app.routers.eod import (
+        _build_report_row, _fuzzy_find_eod, _fuzzy_find_clockin, _names_match,
+    )
+
     vas        = get_active_vas()
     attendance = get_attendance_for_date(date_str)
     eod_main   = get_eod_main_for_date(date_str)
@@ -52,30 +49,19 @@ def _build_report(date_str: str) -> dict:
 
     contracts_by_id = get_active_contracts_by_id()
 
-    # Index attendance
     name_to_clockins: dict[str, list] = {}
     for a in attendance:
         name_to_clockins.setdefault(a["full_name"], []).append(a)
         if a["last_name"] != a["full_name"]:
             name_to_clockins.setdefault(a["last_name"], []).append(a)
 
-    # Index EOD
     main_eod_by_va: dict[str, list] = {}
     for r in eod_main:
-        main_eod_by_va.setdefault(r["name"].lower(), []).append(r)
+        main_eod_by_va.setdefault(r["name"].strip().lower(), []).append(r)
 
     cba_eod_by_va: dict[str, list] = {}
     for r in eod_cba:
-        cba_eod_by_va.setdefault(r["name"].lower(), []).append(r)
-
-    # Expected start times
-    eod_time_in: dict[str, str] = {}
-    for r in [*eod_main, *eod_cba]:
-        k = r["name"].strip().lower()
-        l = k.split()[-1]
-        if r.get("time_in"):
-            eod_time_in.setdefault(k, r["time_in"])
-            eod_time_in.setdefault(l, r["time_in"])
+        cba_eod_by_va.setdefault(r["name"].strip().lower(), []).append(r)
 
     shift_lookup: dict[str, str] = {}
     for va in vas:
@@ -94,9 +80,9 @@ def _build_report(date_str: str) -> dict:
         va_last = key.split()[-1]
         va_cis  = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
         comm    = va.get("community", "")
-        exp     = (eod_time_in.get(key) or eod_time_in.get(va_last)
-                   or shift_lookup.get(key) or shift_lookup.get(va_last, ""))
+        shift_fallback = shift_lookup.get(key) or shift_lookup.get(va_last, "")
 
+        eod_source = main_eod_by_va if comm == "Main" else cba_eod_by_va
         va_eod_list = eod_source.get(key, [])
         if not va_eod_list:
             for eod_name, eod_records in eod_source.items():
@@ -113,34 +99,37 @@ def _build_report(date_str: str) -> dict:
         if not active_contracts:
             ci  = va_cis[0] if va_cis else None
             eod = va_eod_list[0] if va_eod_list else None
-            rows.append(_build_report_row(va, None, comm, ci, eod, exp, False))
+            rows.append(_build_report_row(va, None, comm, ci, eod, shift_fallback, False))
         else:
             for con in active_contracts:
                 con_client = con["client_name"]
                 con_ci, ci_nv = _fuzzy_find_clockin(va_cis, con_client)
                 con_eod, eod_nv = _fuzzy_find_eod(va_eod_list, con_client)
                 rows.append(_build_report_row(
-                    va, con_client, comm, con_ci, con_eod, exp, ci_nv or eod_nv
+                    va, con_client, comm, con_ci, con_eod, shift_fallback, ci_nv or eod_nv
                 ))
 
     clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
 
     missing = [r for r in rows if r["status"] == "missing"]
     late    = [r for r in rows if r["status"] == "late"]
+    early   = [r for r in rows if r["status"] == "early"]
     on_time = [r for r in rows if r["status"] == "on_time"]
 
     return {
-        "date":        date_str,
-        "rows":        rows,
-        "missing":     missing,
-        "late":        late,
-        "on_time":     on_time,
+        "date":    date_str,
+        "rows":    rows,
+        "missing": missing,
+        "late":    late,
+        "early":   early,
+        "on_time": on_time,
         "stats": {
             "active_vas":    len(working_vas),
             "clocked_in":    len(clocked_names),
             "eod_submitted": sum(1 for r in rows if r["clock_out_status"] != "missing"),
             "missing_eod":   sum(1 for r in rows if r["clock_out_status"] == "missing"),
             "late":          len(late),
+            "early":         len(early),
         },
     }
 
@@ -148,14 +137,16 @@ def _build_report(date_str: str) -> dict:
 # ── HTML email builder ────────────────────────────────────────────
 
 def _status_color(status: str) -> str:
-    return {"on_time": "#059669", "late": "#D97706", "missing": "#DC2626"}.get(status, "#6B7280")
+    return {"on_time": "#059669", "late": "#D97706", "missing": "#DC2626", "early": "#7C3AED"}.get(status, "#6B7280")
 
 
-def _status_label(status: str, minutes_late: int) -> str:
+def _status_label(status: str, minutes_late: int, minutes_early: int) -> str:
     if status == "missing":
         return '<span style="color:#DC2626;font-weight:700;">Missing</span>'
     if status == "late":
         return f'<span style="color:#D97706;font-weight:700;">{minutes_late}m late</span>'
+    if status == "early":
+        return f'<span style="color:#7C3AED;font-weight:700;">{minutes_early}m early</span>'
     return '<span style="color:#059669;font-weight:700;">On-time</span>'
 
 
@@ -165,7 +156,6 @@ def _comm_badge(community: str) -> str:
 
 
 def _table_html(title: str, title_color: str, border_color: str, bg_color: str, rows: list) -> str:
-    """Build an HTML table section for a group of report rows."""
     if not rows:
         return ""
 
@@ -174,12 +164,12 @@ def _table_html(title: str, title_color: str, border_color: str, bg_color: str, 
 
     body_rows = ""
     for i, r in enumerate(rows):
-        row_bg = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
-        client = r["client"] or "—"
+        row_bg  = "#FFFFFF" if i % 2 == 0 else "#F9FAFB"
+        client  = r["client"] or "—"
         ci_time = r["clock_in"].replace(" EST", "") if r["clock_in"] else "Missing"
-        ci_color = _status_color(r["clock_in_status"])
+        ci_clr  = _status_color(r["clock_in_status"])
         co_time = r["clock_out"].replace(" EST", "") if r["clock_out"] else "Missing"
-        co_color = _status_color(r["clock_out_status"])
+        co_clr  = _status_color(r["clock_out_status"])
         verify  = ' <span style="color:#D97706;font-weight:800;">*</span>' if r.get("needs_verification") else ""
 
         body_rows += f"""
@@ -187,10 +177,10 @@ def _table_html(title: str, title_color: str, border_color: str, bg_color: str, 
           <td style="{td}font-weight:600;color:#0D1F3C;">{r["va_name"]}{verify}</td>
           <td style="{td}">{client}</td>
           <td style="{td}text-align:center;">{_comm_badge(r["community"])}</td>
-          <td style="{td}color:{ci_color};">{ci_time}</td>
-          <td style="{td}">{_status_label(r["clock_in_status"], r["clock_in_minutes_late"])}</td>
-          <td style="{td}color:{co_color};">{co_time}</td>
-          <td style="{td}">{_status_label(r["clock_out_status"], r["clock_out_minutes_late"])}</td>
+          <td style="{td}color:{ci_clr};">{ci_time}</td>
+          <td style="{td}">{_status_label(r["clock_in_status"], r["clock_in_minutes_late"], r["clock_in_minutes_early"])}</td>
+          <td style="{td}color:{co_clr};">{co_time}</td>
+          <td style="{td}">{_status_label(r["clock_out_status"], r["clock_out_minutes_late"], r["clock_out_minutes_early"])}</td>
         </tr>"""
 
     return f"""
@@ -222,9 +212,9 @@ def build_html_email(report: dict) -> str:
     stats      = report["stats"]
     missing    = report["missing"]
     late       = report["late"]
-    all_clear  = not missing and not late
+    early      = report.get("early", [])
+    all_clear  = not missing and not late and not early
 
-    # Stat pill helper
     def stat(value, label, color):
         return f"""
         <div style="flex:1;min-width:80px;background:#F2F5F9;border-radius:10px;padding:14px;text-align:center;">
@@ -259,6 +249,12 @@ def build_html_email(report: dict) -> str:
         rows=late,
     )
 
+    early_html = _table_html(
+        title=f"⏰ {len(early)} Early Submission{'s' if len(early) != 1 else ''}",
+        title_color="#7C3AED", border_color="#DDD6FE", bg_color="#F5F3FF",
+        rows=early,
+    )
+
     return f"""<!DOCTYPE html>
 <html>
 <body style="margin:0;padding:0;background:#F2F5F9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
@@ -275,6 +271,7 @@ def build_html_email(report: dict) -> str:
       {all_clear_html}
       {missing_html}
       {late_html}
+      {early_html}
     </div>
     <div style="background:#F2F5F9;padding:16px 32px;border-top:1px solid #E2E8F0;">
       <div style="font-size:12px;color:#9CA3AF;">
