@@ -1,11 +1,10 @@
 from fastapi import APIRouter, Query, HTTPException
-from datetime import datetime, date as date_type, timedelta
+from datetime import date as date_type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import calendar
 from app.notion import (
     get_active_vas, get_eod_for_va, get_attendance_for_date,
     get_active_contracts_by_id, va_works_on_date,
-    match_client_name,
 )
 
 router = APIRouter()

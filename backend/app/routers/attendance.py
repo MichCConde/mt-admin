@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Query, HTTPException
 from app.notion import (
-    get_active_vas, get_active_vas_cached, get_attendance_for_date,
+    get_active_vas_cached, get_attendance_for_date,
     get_eod_main_for_date, get_eod_cba_for_date,
     get_all_active_contracts_by_va_id,
     clock_in_punctuality, match_client_name,
 )
 
 router = APIRouter()
-
 
 @router.get("")
 def check_attendance(date: str = Query(..., description="YYYY-MM-DD")):

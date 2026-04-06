@@ -10,12 +10,13 @@ from app.notion import (
     va_works_on_date, get_active_contracts_by_id,
     EST,
 )
+from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clockin
+from app.services.report import build_report_row
 
 router = APIRouter()
 
 
 # ── Send function ─────────────────────────────────────────────────
-
 def send_email(subject: str, html_body: str):
     if not settings.email_sender or not settings.email_app_password or not settings.email_recipient_list:
         raise ValueError(
@@ -37,10 +38,6 @@ def send_email(subject: str, html_body: str):
 # ── Build report data ─────────────────────────────────────────────
 
 def _build_report(date_str: str) -> dict:
-    # Lazy import to avoid circular dependency (main.py loads both routers)
-    from app.routers.eod import (
-        _build_report_row, _fuzzy_find_eod, _fuzzy_find_clockin, _names_match,
-    )
 
     vas        = get_active_vas()
     attendance = get_attendance_for_date(date_str)
@@ -86,7 +83,7 @@ def _build_report(date_str: str) -> dict:
         va_eod_list = eod_source.get(key, [])
         if not va_eod_list:
             for eod_name, eod_records in eod_source.items():
-                if _names_match(key, eod_name):
+                if names_match(key, eod_name):
                     va_eod_list = eod_records
                     break
 
@@ -99,13 +96,13 @@ def _build_report(date_str: str) -> dict:
         if not active_contracts:
             ci  = va_cis[0] if va_cis else None
             eod = va_eod_list[0] if va_eod_list else None
-            rows.append(_build_report_row(va, None, comm, ci, eod, shift_fallback, False))
+            rows.append(build_report_row(va, None, comm, ci, eod, shift_fallback, False))
         else:
             for con in active_contracts:
                 con_client = con["client_name"]
-                con_ci, ci_nv = _fuzzy_find_clockin(va_cis, con_client)
-                con_eod, eod_nv = _fuzzy_find_eod(va_eod_list, con_client)
-                rows.append(_build_report_row(
+                con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
+                con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
+                rows.append(build_report_row(
                     va, con_client, comm, con_ci, con_eod, shift_fallback, ci_nv or eod_nv
                 ))
 

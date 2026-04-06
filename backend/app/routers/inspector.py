@@ -3,7 +3,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date as date_type
 from app.notion import (
     get_active_vas, get_eod_for_va, get_attendance_for_date,
-    get_all_active_contracts_by_va_id,
     get_active_contracts_by_id,
 )
 from app.cache import cache_get, cache_set

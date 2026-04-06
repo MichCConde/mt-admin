@@ -3,8 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.routers import attendance, eod, inspector, schedule, email as email_router, dashboard, eow, eom
-from app.middleware.auth import verify_token
-
+# from app.middleware.auth import verify_token
 
 # ── App ───────────────────────────────────────────────────────────
 app = FastAPI(
@@ -34,6 +33,7 @@ app.include_router(schedule.router,     prefix="/api/schedule",   tags=["Schedul
 app.include_router(email_router.router, prefix="/api/email",      tags=["Email"],      **PROTECTED)
 app.include_router(dashboard.router,    prefix="/api/dashboard",  tags=["Dashboard"],  **PROTECTED)
 app.include_router(eom.router,          prefix="/api/eom",        tags=["EOM"],        **PROTECTED)
+# app.include_router(ai.router,           prefix="/api/ai",         tags=["AI"],         **PROTECTED)
 
 # ── Health check (no auth) ────────────────────────────────────────
 @app.get("/")

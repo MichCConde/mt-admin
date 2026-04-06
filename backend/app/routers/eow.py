@@ -9,6 +9,7 @@ from app.notion import (
     match_client_name,
     EST,
 )
+from app.services.matching import names_match, fuzzy_find_eod
 
 router = APIRouter()
 
@@ -30,15 +31,6 @@ def workdays_in_range(start: str, end: str) -> list[str]:
             result.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
     return result
-
-
-def _names_match(va_name: str, eod_name: str) -> bool:
-    va  = va_name.strip().lower().split()
-    eod = eod_name.strip().lower().split()
-    if not va or not eod:
-        return False
-    return va[0] == eod[0] and va[-1] == eod[-1]
-
 
 def detect_keyword_flags(text: str) -> list[str]:
     if not text:
@@ -105,7 +97,7 @@ def _find_va_eod_for_day(eod_list: list, full_key: str) -> list:
     exact = [r for r in eod_list if r["name"].strip().lower() == full_key]
     if exact:
         return exact
-    return [r for r in eod_list if _names_match(full_key, r["name"])]
+    return [r for r in eod_list if names_match(full_key, r["name"])]
 
 
 def _find_va_eod_for_client(va_eod_list: list, client_name: str):
@@ -196,7 +188,7 @@ def get_eow_report(
                                 break
 
                         # Per-contract EOD (fuzzy)
-                        con_eod = _find_va_eod_for_client(va_day_eod, con_client)
+                        con_eod = fuzzy_find_eod(va_day_eod, con_client)
                         reports = [con_eod] if con_eod else []
                         va_all_eod.extend(reports)
 

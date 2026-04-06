@@ -5,10 +5,10 @@ from app.notion import (
     get_all_active_contracts_by_va_id,
     get_active_contract_id_set,
     get_eod_main_for_date, get_eod_cba_for_date,
-    va_works_on_date,
-    match_client_name,
+    va_works_on_date, match_client_name,
     EST,
 )
+from app.services.matching import names_match
 
 router = APIRouter()
 
@@ -21,15 +21,6 @@ def prev_workday(d: datetime, offset: int = 1) -> str:
         if current.weekday() != 6:
             steps += 1
     return current.strftime("%Y-%m-%d")
-
-
-def _names_match(va_name: str, eod_name: str) -> bool:
-    va  = va_name.strip().lower().split()
-    eod = eod_name.strip().lower().split()
-    if not va or not eod:
-        return False
-    return va[0] == eod[0] and va[-1] == eod[-1]
-
 
 def get_missing_for_date(vas: list, date_str: str,
                          contracts_by_va: dict) -> set[str]:
@@ -53,7 +44,7 @@ def get_missing_for_date(vas: list, date_str: str,
         if community == "Main":
             found = main_idx.get(key)
             if not found:
-                found = any(_names_match(key, r["name"]) for r in eod_main)
+                found = any(names_match(key, r["name"]) for r in eod_main)
             if not found:
                 missing.add(key)
 
@@ -61,7 +52,7 @@ def get_missing_for_date(vas: list, date_str: str,
             contracts = contracts_by_va.get(va["id"], [])
             if not contracts:
                 found = any(
-                    r["name"].lower() == key or _names_match(key, r["name"])
+                    r["name"].lower() == key or names_match(key, r["name"])
                     for r in eod_cba
                 )
                 if not found:
@@ -72,7 +63,7 @@ def get_missing_for_date(vas: list, date_str: str,
                     if cba_idx.get((key, client_key)):
                         continue
                     found = any(
-                        (_names_match(key, r["name"]) or r["name"].lower() == key)
+                        (names_match(key, r["name"]) or r["name"].lower() == key)
                         and match_client_name(r.get("client", ""), contract["client_name"])[0]
                         for r in eod_cba
                     )
