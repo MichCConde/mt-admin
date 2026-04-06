@@ -1,5 +1,5 @@
 import { useState, useEffect }   from "react";
-import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, RefreshCw } from "lucide-react";
+import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, RefreshCw, Download } from "lucide-react";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
@@ -63,6 +63,67 @@ function CachedBanner({ cacheKey, onRefresh, loading }) {
     </div>
   );
 }
+
+async function downloadAvailability(apiFetchFn, setDownloading) {
+  setDownloading(true);
+  try {
+    const data = await apiFetchFn("/api/schedule/availability");
+
+    const rows = [["Period", "Time Slot", "VA Name", "Current Clients", "Slots Open", "Current Schedule"]];
+
+    // Morning
+    const morningSlots = Object.entries(data.morning || {});
+    if (morningSlots.length > 0) {
+      rows.push(["", "", "", "", "", ""]);
+      rows.push(["MORNING AVAILABILITY", "", "", "", "", ""]);
+      rows.push(["", "", "", "", "", ""]);
+      for (const [slot, vas] of morningSlots) {
+        for (const va of vas) {
+          rows.push(["Morning", slot, va.va_name, va.clients, va.slots_open, va.schedule]);
+        }
+      }
+    }
+
+    // Afternoon
+    const afternoonSlots = Object.entries(data.afternoon || {});
+    if (afternoonSlots.length > 0) {
+      rows.push(["", "", "", "", "", ""]);
+      rows.push(["AFTERNOON AVAILABILITY", "", "", "", "", ""]);
+      rows.push(["", "", "", "", "", ""]);
+      for (const [slot, vas] of afternoonSlots) {
+        for (const va of vas) {
+          rows.push(["Afternoon", slot, va.va_name, va.clients, va.slots_open, va.schedule]);
+        }
+      }
+    }
+
+    if (morningSlots.length === 0 && afternoonSlots.length === 0) {
+      rows.push(["No CBA VAs with available time slots found.", "", "", "", "", ""]);
+    }
+
+    // Summary row
+    rows.push(["", "", "", "", "", ""]);
+    rows.push([`Total VAs with availability: ${data.total_available_vas}`, "", "", "", "", ""]);
+
+    const csv = rows
+      .map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+      .join("\n");
+
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
+    a.download = `va-availability-${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+
+  } catch (e) {
+    alert("Failed to download availability: " + e.message);
+  } finally {
+    setDownloading(false);
+  }
+}
+
 // ── Root ──────────────────────────────────────────────────────────
 const CACHE_KEY = CACHE_KEYS.SCHEDULE;
 
@@ -71,6 +132,7 @@ export default function Schedule() {
   const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
   const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
+  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (cacheGet(CACHE_KEY)) return;   // already cached — skip fetch
@@ -99,6 +161,17 @@ export default function Schedule() {
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
       <PageHeader title="Schedule" subtitle="View VA shift times across the week. All times are in EST." />
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+          <Button
+            icon={Download}
+            variant="ghost"
+            onClick={() => downloadAvailability(apiFetch, setDownloading)}
+            disabled={downloading}
+            size="sm"
+          >
+            {downloading ? "Downloading…" : "Download Availability CSV"}
+          </Button>
+        </div>
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       <CachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />

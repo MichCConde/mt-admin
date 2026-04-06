@@ -1,6 +1,6 @@
 import re
 from fastapi import APIRouter, HTTPException
-from app.notion import get_active_vas
+from app.notion import get_active_vas, get_active_contracts_by_id
 
 router = APIRouter()
 
@@ -140,6 +140,128 @@ def get_schedule():
             "vas":           enriched,
             "total":         len(enriched),
             "flexible_count": sum(1 for v in enriched if v["is_flexible"]),
+        }
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# ──────────────────────────────────────────────────────────────────
+
+MAX_CLIENTS = 4
+
+MORNING_SLOTS   = [(8,10),(9,11),(10,12)]
+AFTERNOON_SLOTS = [(12,14),(13,15),(14,16),(15,17),(16,18)]
+
+
+def _fmt_hour(h: int) -> str:
+    ap = "PM" if h >= 12 else "AM"
+    return f"{h % 12 or 12}:00 {ap}"
+
+
+def _fmt_slot(s: int, e: int) -> str:
+    return f"{_fmt_hour(s)} - {_fmt_hour(e)}"
+
+
+def _blocks_overlap(slot_start: int, slot_end: int, block: dict) -> bool:
+    b_start = block["start_h"] + block["start_m"] / 60
+    b_end   = block["end_h"]   + block["end_m"]   / 60
+    return slot_start < b_end and b_start < slot_end
+
+
+def _get_available_slots(shift_blocks: list, slot_defs: list) -> list[str]:
+    """Return formatted slot strings where the VA has no overlap."""
+    return [
+        _fmt_slot(s, e) for s, e in slot_defs
+        if not any(_blocks_overlap(s, e, b) for b in shift_blocks)
+    ]
+
+
+@router.get("/availability")
+def get_availability():
+    """
+    CBA VAs with capacity for more clients, grouped by available
+    2-hour time slots. Criteria: CBA, 1-3 active clients, has shift data.
+    """
+    try:
+        vas             = get_active_vas()
+        contracts_by_id = get_active_contracts_by_id()
+
+        # ── Build per-VA availability ─────────────────────────────
+        va_list = []
+
+        for va in vas:
+            if va.get("community") != "CBA":
+                continue
+
+            active_contracts = [
+                contracts_by_id[cid]
+                for cid in va.get("contract_ids", [])
+                if cid in contracts_by_id
+            ]
+            count = len(active_contracts)
+            if count < 1 or count >= MAX_CLIENTS:
+                continue
+
+            blocks = parse_shift_blocks(va.get("shift_time", ""))
+            if not blocks:
+                continue
+
+            morning   = _get_available_slots(blocks, MORNING_SLOTS)
+            afternoon = _get_available_slots(blocks, AFTERNOON_SLOTS)
+            if not morning and not afternoon:
+                continue
+
+            client_names  = ", ".join(c["client_name"] for c in active_contracts)
+            shift_display = " | ".join(b["display"] for b in blocks)
+
+            va_list.append({
+                "name":           va["name"],
+                "client_count":   count,
+                "clients":        client_names,
+                "schedule":       va.get("schedule", ""),
+                "shift_display":  shift_display,
+                "morning_slots":  morning,
+                "afternoon_slots": afternoon,
+                "slots_open":     MAX_CLIENTS - count,
+            })
+
+        # ── Group into slot → VAs (preserves slot order) ──────────
+        morning_grouped  = {}
+        afternoon_grouped = {}
+
+        for s, e in MORNING_SLOTS:
+            key = _fmt_slot(s, e)
+            vas_in_slot = [
+                {
+                    "va_name":  v["name"],
+                    "clients":  v["clients"],
+                    "schedule": f"{v['schedule']} ({v['shift_display']})",
+                    "slots_open": v["slots_open"],
+                }
+                for v in va_list if key in v["morning_slots"]
+            ]
+            if vas_in_slot:
+                morning_grouped[key] = vas_in_slot
+
+        for s, e in AFTERNOON_SLOTS:
+            key = _fmt_slot(s, e)
+            vas_in_slot = [
+                {
+                    "va_name":  v["name"],
+                    "clients":  v["clients"],
+                    "schedule": f"{v['schedule']} ({v['shift_display']})",
+                    "slots_open": v["slots_open"],
+                }
+                for v in va_list if key in v["afternoon_slots"]
+            ]
+            if vas_in_slot:
+                afternoon_grouped[key] = vas_in_slot
+
+        return {
+            "total_available_vas": len(va_list),
+            "vas":                 va_list,
+            "morning":             morning_grouped,
+            "afternoon":           afternoon_grouped,
         }
 
     except Exception as e:

@@ -21,16 +21,15 @@ import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/repor
 
 
 const NAV = [
-  { id: "dashboard",    icon: LayoutDashboard, label: "Dashboard",      sub: "Overview",         component: Dashboard    },
-  { id: "virtual_assistants",   icon: ClipboardList,   label: "Virtual Assistants",     sub: "EOD & Attendance", component: VirtualAssistants    },
-  { id: "schedule",     icon: CalendarDays,    label: "Schedule",       sub: "Shift overview",   component: Schedule     },
-  { id: "eow_reports",  icon: FileSpreadsheet, label: "EOW Reports",    sub: "End-of-week reports", component: EowReports },
-  { id: "activity_logs",icon: ScrollText,      label: "Activity Logs",  sub: "Audit trail",      component: ActivityLogs },
-  { id: "eom_reports", icon: BarChart3, label: "EOM Reports", sub: "Monthly performance", component: EomReports },
+  { id: "dashboard",          icon: LayoutDashboard,    label: "Dashboard",           sub: "Overview",              component: Dashboard            },
+  { id: "virtual_assistants", icon: ClipboardList,      label: "Virtual Assistants",  sub: "EOD & Attendance",      component: VirtualAssistants    },
+  { id: "schedule",           icon: CalendarDays,       label: "Schedule",            sub: "Shift overview",        component: Schedule             },
+  { id: "eow_reports",        icon: FileSpreadsheet,    label: "EOW Reports",         sub: "End-of-week reports",   component: EowReports           },
+  { id: "eom_reports",        icon: BarChart3,          label: "EOM Reports",         sub: "Monthly performance",   component: EomReports           },
+  { id: "activity_logs",      icon: ScrollText,         label: "Activity Logs",       sub: "Audit trail",           component: ActivityLogs         },
 ];
 
 const NAV_SOON = [
-  { icon: BarChart3,   label: "EOM Reports"    },
   { icon: ShieldAlert, label: "Strike Tracker" },
 ];
 
