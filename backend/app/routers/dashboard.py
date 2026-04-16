@@ -5,8 +5,10 @@ from app.notion import (
     get_all_active_contracts_by_va_id,
     get_active_contract_id_set,
     get_eod_main_for_date, get_eod_cba_for_date,
-    va_works_on_date, match_client_name,
-    EST,
+    get_attendance_for_date,
+    va_works_on_date,
+    match_client_name,
+    to_est, EST,
 )
 from app.services.matching import names_match
 
@@ -21,6 +23,7 @@ def prev_workday(d: datetime, offset: int = 1) -> str:
         if current.weekday() != 6:
             steps += 1
     return current.strftime("%Y-%m-%d")
+
 
 def get_missing_for_date(vas: list, date_str: str,
                          contracts_by_va: dict) -> set[str]:
@@ -74,6 +77,66 @@ def get_missing_for_date(vas: list, date_str: str,
     return missing
 
 
+def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
+    """
+    Build a chronological activity feed for a given date.
+    Merges attendance (clock-ins) and EOD submissions into one sorted list.
+    """
+    attendance = get_attendance_for_date(date_str)
+    eod_main   = get_eod_main_for_date(date_str)
+    eod_cba    = get_eod_cba_for_date(date_str)
+
+    # Build a quick lookup: lowercase name → VA record (for community info)
+    va_lookup = {}
+    for va in vas:
+        k = va["name"].strip().lower()
+        va_lookup[k] = va
+        va_lookup[k.split()[-1]] = va
+
+    feed = []
+
+    # Clock-ins
+    for a in attendance:
+        # Resolve VA name for display
+        va_rec = va_lookup.get(a["full_name"]) or va_lookup.get(a["last_name"])
+        display_name = va_rec["name"] if va_rec else a["raw_name"].split(",")[0].strip()
+        community = va_rec.get("community", "") if va_rec else ""
+
+        est_dt = to_est(a["created_time"])
+
+        feed.append({
+            "va_name":   display_name,
+            "community": community,
+            "action":    "Clock In",
+            "client":    a.get("client", "").strip() or "—",
+            "time_est":  est_dt.strftime("%I:%M %p").lstrip("0"),
+            "sort_key":  est_dt.isoformat(),
+        })
+
+    # EOD submissions (Main + CBA)
+    for r in [*eod_main, *eod_cba]:
+        va_key = r["name"].strip().lower()
+        va_rec = va_lookup.get(va_key) or va_lookup.get(va_key.split()[-1])
+        display_name = va_rec["name"] if va_rec else r["name"].strip()
+        community = va_rec.get("community", "") if va_rec else r.get("community", "")
+
+        est_dt = to_est(r["submitted_at"])
+
+        feed.append({
+            "va_name":   display_name,
+            "community": community,
+            "action":    "EOD Report",
+            "client":    r.get("client", "").strip() or "—",
+            "time_est":  est_dt.strftime("%I:%M %p").lstrip("0"),
+            "sort_key":  est_dt.isoformat(),
+        })
+
+    # Sort newest first
+    feed.sort(key=lambda x: x["sort_key"], reverse=True)
+
+    return feed
+
+
 @router.get("")
 def get_dashboard():
     try:
@@ -91,23 +154,9 @@ def get_dashboard():
             if not any(cid in active_contract_ids for cid in v.get("contract_ids", []))
         ]
 
-        client_buckets: dict[int, list[str]] = {1: [], 2: [], 3: [], 4: []}
-
-        for va in cba_vas:
-            active_count = sum(
-                1 for cid in va.get("contract_ids", [])
-                if cid in active_contract_ids
-            )
-            count  = active_count if active_count > 0 else 1
-            bucket = min(count, 4)
-            client_buckets[bucket].append(va["name"])
-
-        cba_distribution = [
-            {"label": "1 Client",   "count": len(client_buckets[1]), "vas": client_buckets[1]},
-            {"label": "2 Clients",  "count": len(client_buckets[2]), "vas": client_buckets[2]},
-            {"label": "3 Clients",  "count": len(client_buckets[3]), "vas": client_buckets[3]},
-            {"label": "4+ Clients", "count": len(client_buckets[4]), "vas": client_buckets[4]},
-        ]
+        # Today's activity feed
+        today_str = now.strftime("%Y-%m-%d")
+        activity_feed = _build_activity_feed(today_str, vas)
 
         yesterday  = prev_workday(now, 1)
         day_before = prev_workday(now, 2)
@@ -126,7 +175,8 @@ def get_dashboard():
                 "cba":         len(cba_vas),
                 "no_contract": len(no_contract_vas),
             },
-            "cba_distribution": cba_distribution,
+            "activity_feed": activity_feed,
+            "activity_date": today_str,
             "missing": {
                 "date":          yesterday,
                 "count":         len(missing_yesterday),

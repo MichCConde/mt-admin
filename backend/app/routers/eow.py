@@ -184,11 +184,11 @@ def get_eow_report(
                             )
                             if is_match:
                                 contract_clocked_in = True
-                                needs_verification  = needs_v
+                                needs_verification = needs_verification or eod_needs_v
                                 break
 
                         # Per-contract EOD (fuzzy)
-                        con_eod = fuzzy_find_eod(va_day_eod, con_client)
+                        con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
                         reports = [con_eod] if con_eod else []
                         va_all_eod.extend(reports)
 

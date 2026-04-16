@@ -1,5 +1,5 @@
 import { useEffect, useState }  from "react";
-import { Users, UserCheck, UserX, RefreshCw } from "lucide-react";
+import { Users, UserCheck, UserX, RefreshCw, Clock, FileCheck } from "lucide-react";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
 import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
@@ -7,41 +7,125 @@ import { Card, PageHeader, StatRow } from "../ui/Structure";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import Button from "../ui/Button";
 
-// ── Bar chart used in CBA distribution ───────────────────────────
-function BarChart({ items, max }) {
+// ── Action badge for activity feed ────────────────────────────────
+function ActionBadge({ action }) {
+  const isClockIn = action === "Clock In";
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      {items.map((item, i) => {
-        const pct = max > 0 ? (item.count / max) * 100 : 0;
-        const BAR_COLORS = [colors.teal, colors.communityMain, colors.communitySM, colors.communityCBA];
-        return (
-          <div key={i}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.textBody }}>{item.label}</span>
-              <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>{item.count}</span>
-            </div>
-            <div style={{ width: "100%", height: 8, background: colors.bg, borderRadius: 99, overflow: "hidden" }}>
-              <div style={{
-                width: `${pct}%`, height: "100%",
-                background: BAR_COLORS[i % BAR_COLORS.length],
-                borderRadius: 99, transition: "width .5s ease",
-              }} />
-            </div>
-            {item.vas?.length > 0 && (
-              <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginTop: 6 }}>
-                {item.vas.map((name, j) => (
-                  <span key={j} style={{
-                    fontSize: font.xs, color: colors.textMuted,
-                    background: colors.surfaceAlt, border: `1px solid ${colors.border}`,
-                    borderRadius: radius.sm, padding: "2px 8px",
-                  }}>{name}</span>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
-    </div>
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 4,
+      fontSize: font.xs, fontWeight: 700,
+      color: isClockIn ? colors.teal : colors.communitySM,
+      background: isClockIn ? colors.tealLight : "#F5F3FF",
+      border: `1px solid ${isClockIn ? colors.tealMid : "#DDD6FE"}`,
+      borderRadius: radius.sm, padding: "2px 8px",
+    }}>
+      {isClockIn
+        ? <Clock size={10} style={{ flexShrink: 0 }} />
+        : <FileCheck size={10} style={{ flexShrink: 0 }} />
+      }
+      {action}
+    </span>
+  );
+}
+
+// ── Activity Feed Table ───────────────────────────────────────────
+function ActivityFeed({ feed, date }) {
+  const [filter, setFilter] = useState("all");
+
+  const filtered = filter === "all"
+    ? feed
+    : filter === "clockin"
+      ? feed.filter(f => f.action === "Clock In")
+      : feed.filter(f => f.action === "EOD Report");
+
+  const clockInCount = feed.filter(f => f.action === "Clock In").length;
+  const eodCount     = feed.filter(f => f.action === "EOD Report").length;
+
+  const fmtDate = date
+    ? new Date(date + "T12:00:00").toLocaleDateString("en-US", {
+        weekday: "long", month: "long", day: "numeric",
+      })
+    : "Today";
+
+  const pillStyle = (active) => ({
+    display: "inline-flex", alignItems: "center", gap: 4,
+    padding: "4px 12px", borderRadius: 16, cursor: "pointer",
+    fontSize: font.xs, fontWeight: 700, border: "1.5px solid",
+    transition: "all .15s",
+    background: active ? colors.teal : colors.surface,
+    color: active ? "#fff" : colors.textMuted,
+    borderColor: active ? colors.teal : colors.border,
+  });
+
+  const th = {
+    padding: "8px 12px", fontSize: font.xs, fontWeight: 700,
+    color: "#fff", textAlign: "left", letterSpacing: "0.04em",
+    textTransform: "uppercase",
+  };
+  const td = {
+    padding: "10px 12px", fontSize: font.sm, color: colors.textBody,
+    borderTop: `1px solid ${colors.border}`,
+  };
+
+  return (
+    <Card
+      title={`Today's Activity`}
+      subtitle={fmtDate}
+      noPadding
+    >
+      {/* Filter pills */}
+      <div style={{ display: "flex", gap: 6, padding: "12px 20px", borderBottom: `1px solid ${colors.border}` }}>
+        <span style={pillStyle(filter === "all")} onClick={() => setFilter("all")}>
+          All {feed.length}
+        </span>
+        <span style={pillStyle(filter === "clockin")} onClick={() => setFilter("clockin")}>
+          <Clock size={10} /> Clock Ins {clockInCount}
+        </span>
+        <span style={pillStyle(filter === "eod")} onClick={() => setFilter("eod")}>
+          <FileCheck size={10} /> EOD Reports {eodCount}
+        </span>
+      </div>
+
+      {filtered.length === 0 ? (
+        <div style={{ padding: "32px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>
+          No activity recorded yet today.
+        </div>
+      ) : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr style={{ background: colors.navy }}>
+                <th style={th}>VA</th>
+                <th style={th}>Action</th>
+                <th style={th}>Client</th>
+                <th style={{ ...th, textAlign: "right" }}>Time (EST)</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((row, i) => (
+                <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
+                  <td style={td}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <CommunityBadge community={row.community} />
+                      <span style={{ fontWeight: 600, color: colors.textPrimary }}>{row.va_name}</span>
+                    </div>
+                  </td>
+                  <td style={td}>
+                    <ActionBadge action={row.action} />
+                  </td>
+                  <td style={{ ...td, color: row.client === "—" ? colors.textFaint : colors.textBody }}>
+                    {row.client}
+                  </td>
+                  <td style={{ ...td, textAlign: "right", fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>
+                    {row.time_est}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </Card>
   );
 }
 
@@ -92,7 +176,7 @@ export default function Dashboard() {
   const [error,   setError]   = useState("");
 
   useEffect(() => {
-    if (cacheGet(CACHE_KEY)) return;   // already cached — skip fetch
+    if (cacheGet(CACHE_KEY)) return;
     apiFetch("/api/dashboard")
       .then(d => { cacheSet(CACHE_KEY, d); setData(d); })
       .catch(e => setError(e.message))
@@ -136,8 +220,7 @@ export default function Dashboard() {
 
   if (!data) return null;
 
-  const { va_counts, cba_distribution, missing } = data;
-  const maxCBA = Math.max(...cba_distribution.map(d => d.count), 1);
+  const { va_counts, activity_feed = [], activity_date, missing } = data;
 
   return (
     <div style={{ width: "100%", display: "flex", flexDirection: "column", gap: 28 }}>
@@ -161,13 +244,11 @@ export default function Dashboard() {
         />
       </StatRow>
 
-      {/* ── Row 2: CBA Distribution + Missing Reports ──────────── */}
+      {/* ── Row 2: Activity Feed + Missing Reports ─────────────── */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }}>
 
-        {/* CBA Client Distribution */}
-        <Card title="CBA VA Hours Distribution" subtitle="VAs grouped by number of active clients">
-          <BarChart items={cba_distribution} max={maxCBA} />
-        </Card>
+        {/* Today's Activity */}
+        <ActivityFeed feed={activity_feed} date={activity_date} />
 
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
