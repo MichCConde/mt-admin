@@ -21,9 +21,10 @@ const MONTHS = ["January","February","March","April","May","June",
 const MONTH_OPTIONS = MONTHS.map((m, i) => ({ value: i + 1, label: m }));
 
 const TABS = [
+  { id: "dashboard",  label: "Dashboard"     },
   { id: "reports",    label: "Reports"       },
   { id: "active",     label: "Active"        },
-  { id: "main",       label: "Agency (Main)" },
+  { id: "main",       label: "Agency"        },
   { id: "cba",        label: "CBA"           },
 ];
 
@@ -882,7 +883,7 @@ export default function VirtualAssistants() {
   const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
   const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
-  const [activeTab, setActiveTab] = useState("reports");
+  const [activeTab, setActiveTab] = useState("dashboard");
   const [selected,  setSelected]  = useState(null);
 
   useEffect(() => {
@@ -908,7 +909,7 @@ export default function VirtualAssistants() {
 
   const cbaMultiple = vas.filter(v => v.community === "CBA" && (v.contract_ids?.length ?? 0) > 1);
 
-  const isReportTab = activeTab === "reports";
+  const isReportTab = activeTab === "reports" || activeTab === "dashboard";
 
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
@@ -943,6 +944,7 @@ export default function VirtualAssistants() {
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       {/* EOD & Attendance tabs */}
+      {activeTab === "dashboard"    && <DashboardTab />}
       {activeTab === "reports"    && <ReportsTab />}
 
       {/* Directory tabs */}
@@ -981,6 +983,216 @@ export default function VirtualAssistants() {
       )}
 
       {selected && <VAModal va={selected} onClose={() => setSelected(null)} />}
+    </div>
+  );
+}
+
+const SHIFT_TABS = [
+  { id: "morning",   label: "Morning Shift",   sub: "7:00 AM – 10:00 AM" },
+  { id: "mid",       label: "Mid Shift",       sub: "10:00 AM – 3:00 PM" },
+  { id: "afternoon", label: "Afternoon Shift",  sub: "3:00 PM – 5:00 PM"  },
+];
+
+function ShiftTabBar({ tabs, active, onChange }) {
+  return (
+    <div style={{ display: "flex", gap: 0, borderBottom: `2px solid ${colors.border}`, marginBottom: 16 }}>
+      {tabs.map(t => {
+        const isActive = t.id === active;
+        return (
+          <button key={t.id} onClick={() => onChange(t.id)} style={{
+            padding: "10px 20px", background: "none", border: "none", cursor: "pointer",
+            fontFamily: font.family, fontSize: font.sm, fontWeight: 700,
+            color: isActive ? colors.teal : colors.textMuted,
+            borderBottom: isActive ? `2px solid ${colors.teal}` : "2px solid transparent",
+            marginBottom: -2, transition: "all .15s",
+          }}>
+            <div>{t.label}</div>
+            <div style={{ fontSize: font.xs, fontWeight: 500, color: isActive ? colors.teal : colors.textFaint, marginTop: 2 }}>
+              {t.sub}
+            </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatusBadgeDash({ status }) {
+  const config = {
+    "Clocked In":  { color: colors.teal,    bg: colors.tealLight,    border: colors.tealMid },
+    "Clocked Out": { color: colors.success,  bg: colors.successLight, border: colors.successBorder },
+    "Absent":      { color: colors.danger,   bg: colors.dangerLight,  border: colors.dangerBorder },
+  };
+  const c = config[status] || config["Absent"];
+  return (
+    <span style={{
+      display: "inline-block", fontSize: font.xs, fontWeight: 700,
+      color: c.color, background: c.bg, border: `1px solid ${c.border}`,
+      borderRadius: radius.sm, padding: "2px 10px",
+    }}>
+      {status}
+    </span>
+  );
+}
+
+function PunctualityCell({ status, minutesLate, minutesEarly }) {
+  if (!status || status === "missing")
+    return <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>;
+  if (status === "late")
+    return <span style={{ color: colors.warning, fontWeight: 600 }}>{minutesLate}m late</span>;
+  if (status === "early")
+    return <span style={{ color: "#7C3AED", fontWeight: 600 }}>{minutesEarly}m early</span>;
+  return <span style={{ color: colors.success, fontWeight: 600 }}>On-time</span>;
+}
+
+function DashboardTab() {
+  const [data,      setData]      = useState(null);
+  const [loading,   setLoading]   = useState(true);
+  const [error,     setError]     = useState("");
+  const [shiftTab,  setShiftTab]  = useState("morning");
+
+  function fetchData() {
+    setLoading(true); setError("");
+    apiFetch("/api/eod/dashboard")
+      .then(d => setData(d))
+      .catch(e => setError(e.message))
+      .finally(() => setLoading(false));
+  }
+
+  useEffect(() => { fetchData(); }, []);
+
+  const stats = data?.stats || {};
+  const rows  = data ? (data[shiftTab] || []) : [];
+
+  const th = {
+    padding: "10px 12px", fontSize: font.xs, fontWeight: 700,
+    color: "#fff", textAlign: "left", letterSpacing: "0.04em",
+    textTransform: "uppercase", whiteSpace: "nowrap",
+  };
+  const td = {
+    padding: "10px 12px", fontSize: font.sm, color: colors.textBody,
+    borderTop: `1px solid ${colors.border}`, whiteSpace: "nowrap",
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* Header row */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div>
+          <div style={{ fontSize: font.lg, fontWeight: 800, color: colors.textPrimary }}>
+            Live Shift Dashboard
+          </div>
+          <div style={{ fontSize: font.sm, color: colors.textMuted }}>
+            {data?.date
+              ? new Date(data.date + "T12:00:00").toLocaleDateString("en-US", {
+                  weekday: "long", month: "long", day: "numeric", year: "numeric",
+                })
+              : "Today"
+            }
+          </div>
+        </div>
+        <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
+          {loading ? "Loading…" : "Refresh"}
+        </Button>
+      </div>
+
+      {/* Stat cards */}
+      {data && (
+        <StatRow>
+          <StatCard icon={Users}     label="Working Today"  value={stats.total ?? 0} />
+          <StatCard icon={Clock}     label="Clocked In"     value={stats.clocked_in ?? 0}  highlight="teal" />
+          <StatCard icon={UserCheck} label="Clocked Out"    value={stats.clocked_out ?? 0} highlight="success" />
+          <StatCard icon={UserX}     label="Absent"         value={stats.absent ?? 0}
+            highlight={(stats.absent ?? 0) > 0 ? "danger" : "success"} />
+        </StatRow>
+      )}
+
+      {error && <StatusBox variant="danger">{error}</StatusBox>}
+
+      {/* Shift sub-tabs */}
+      <ShiftTabBar tabs={SHIFT_TABS} active={shiftTab} onChange={setShiftTab} />
+
+      {/* Table */}
+      {loading ? (
+        <div style={{ textAlign: "center", color: colors.textMuted, fontSize: font.sm, padding: "40px 0" }}>
+          Loading shift data…
+        </div>
+      ) : rows.length === 0 ? (
+        <StatusBox variant="info">
+          No VAs scheduled for the {SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.
+        </StatusBox>
+      ) : (
+        <Card noPadding>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: colors.navy }}>
+                  <th style={th}>Name</th>
+                  <th style={th}>Client</th>
+                  <th style={th}>Shift Time</th>
+                  <th style={th}>Clock In EST</th>
+                  <th style={th}>Punctuality</th>
+                  <th style={th}>Status</th>
+                  <th style={th}>Clock Out EST</th>
+                  <th style={th}>Submission</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
+                    <td style={td}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <CommunityBadge community={r.community} />
+                        <span style={{ fontWeight: 600, color: colors.textPrimary }}>{r.va_name}</span>
+                      </div>
+                    </td>
+                    <td style={td}>{r.client}</td>
+                    <td style={{ ...td, fontWeight: 600, color: colors.teal, fontSize: font.xs }}>
+                      {r.shift_time}
+                    </td>
+                    <td style={td}>
+                      {r.clock_in
+                        ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
+                        : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                      }
+                    </td>
+                    <td style={td}>
+                      {r.status === "Absent"
+                        ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                        : <PunctualityCell
+                            status={r.clock_in_status}
+                            minutesLate={r.clock_in_minutes_late}
+                            minutesEarly={r.clock_in_minutes_early}
+                          />
+                      }
+                    </td>
+                    <td style={td}>
+                      <StatusBadgeDash status={r.status} />
+                    </td>
+                    <td style={td}>
+                      {r.status === "Clocked Out"
+                        ? <span style={{ fontWeight: 500 }}>{(r.clock_out || "").replace(" EST", "")}</span>
+                        : <span style={{ color: colors.textFaint }}>—</span>
+                      }
+                    </td>
+                    <td style={td}>
+                      {r.status === "Clocked Out" && r.clock_out_status
+                        ? <PunctualityCell
+                            status={r.clock_out_status}
+                            minutesLate={r.clock_out_minutes_late}
+                            minutesEarly={r.clock_out_minutes_early}
+                          />
+                        : <span style={{ color: colors.textFaint }}>—</span>
+                      }
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
