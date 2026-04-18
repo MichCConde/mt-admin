@@ -3,15 +3,13 @@ from fastapi import FastAPI, Depends, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import attendance, eod, inspector, schedule, email as email_router, dashboard, eow, eom
+from app.routers import attendance, eod, inspector, schedule, email as email_router, dashboard, eow, eom, staff
 from app.middleware.auth import verify_token
 from app.middleware.security import (
     RateLimitMiddleware,
     BodySizeLimitMiddleware,
     SecurityHeadersMiddleware,
 )
-from app.routers import attendance, eod, inspector, schedule, email as email_router, dashboard, eow, eom, staff
-
 
 # ── App ───────────────────────────────────────────────────────────
 IS_PRODUCTION = os.getenv("VERCEL_ENV") == "production" or bool(settings.frontend_url)
