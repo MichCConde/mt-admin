@@ -10,6 +10,7 @@ from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clocki
 from app.services.report import build_report_row
 from app.routers.schedule import parse_shift_blocks
 from datetime import datetime
+from app.middleware.security import validate_date, safe_error
 
 router = APIRouter()
 
@@ -22,6 +23,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
         attendance      = get_attendance_for_date(date)
         eod_main        = get_eod_main_for_date(date)
         eod_cba         = get_eod_cba_for_date(date)
+        date            = validate_date(date)
 
         name_to_clockins: dict[str, list] = {}
         for a in attendance:
@@ -134,7 +136,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             "late_submissions": late,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_error(e) 
 
 # ── Combined Report route ─────────────────────────────────────────
 

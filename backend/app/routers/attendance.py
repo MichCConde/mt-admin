@@ -5,6 +5,7 @@ from app.notion import (
     get_all_active_contracts_by_va_id,
     clock_in_punctuality, match_client_name,
 )
+from app.middleware.security import validate_date, safe_error
 
 router = APIRouter()
 
@@ -16,6 +17,7 @@ def check_attendance(date: str = Query(..., description="YYYY-MM-DD")):
         attendance      = get_attendance_for_date(date)
         eod_main        = get_eod_main_for_date(date)
         eod_cba         = get_eod_cba_for_date(date)
+        date            = validate_date(date)
 
         # ── Index attendance by full_name + last_name fallback ────
         # All records are clock-ins — no "type" field exists anymore.
@@ -111,4 +113,4 @@ def check_attendance(date: str = Query(..., description="YYYY-MM-DD")):
             "verify_count":   verify_count,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_error(e)

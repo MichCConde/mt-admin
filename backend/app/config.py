@@ -42,5 +42,3 @@ def get_settings() -> Settings:
 
 
 settings = get_settings()
-
-anthropic_api_key: str = ""

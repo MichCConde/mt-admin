@@ -12,6 +12,7 @@ from app.notion import (
 )
 from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clockin
 from app.services.report import build_report_row
+from app.middleware.security import validate_date_range_30d, safe_error
 
 router = APIRouter()
 
@@ -288,6 +289,7 @@ def send_morning_report():
     try:
         yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
         report    = _build_report(yesterday)
+        date = validate_date_range_30d(date)
 
         total_issues = len(report["missing"]) + len(report["late"])
         subject = (
@@ -322,4 +324,4 @@ def send_report_for_date(date: str):
         send_email(subject, build_html_email(report))
         return {"sent": True, "date": date}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_error(e)

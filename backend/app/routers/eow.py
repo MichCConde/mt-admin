@@ -10,6 +10,8 @@ from app.notion import (
     EST,
 )
 from app.services.matching import names_match, fuzzy_find_eod
+from app.middleware.security import validate_date, safe_error
+
 
 router = APIRouter()
 
@@ -120,6 +122,8 @@ def get_eow_report(
         vas              = get_active_vas()
         contracts_by_id  = get_active_contracts_by_id()
         workdays         = workdays_in_range(start, end)
+        start            = validate_date(start)
+        end              = validate_date(end)
 
         week_attendance, week_eod_main, week_eod_cba = fetch_week_data(workdays)
 
@@ -266,4 +270,4 @@ def get_eow_report(
         }
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise safe_error(e)
