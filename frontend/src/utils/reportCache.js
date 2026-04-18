@@ -1,15 +1,14 @@
 const TTL_MS = 45 * 60 * 1000; // 45 minutes
 
-// ── Centralised key registry ──────────────────────────────────────
-// Import CACHE_KEYS in any component instead of hard-coding strings.
 export const CACHE_KEYS = {
   DASHBOARD : "dashboard:summary",
   SCHEDULE  : "schedule:vas",
   VA_LIST   : "va:list",
   EOW_ALL   : "eow:all",
   EOW_VA    : "eow:va",
-  REPORT  : "report:data",
+  REPORT    : "report:data",
   STAFF     : "staff:list",
+  VA_DASH   : "va:dashboard",
 };
 
 // ── Core helpers ──────────────────────────────────────────────────

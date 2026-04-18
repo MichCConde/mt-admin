@@ -1046,20 +1046,29 @@ function PunctualityCell({ status, minutesLate, minutesEarly }) {
 }
 
 function DashboardTab() {
-  const [data,      setData]      = useState(null);
-  const [loading,   setLoading]   = useState(true);
+  const VA_DASH_KEY = CACHE_KEYS.VA_DASH;
+
+  const [data,      setData]      = useState(() => cacheGet(VA_DASH_KEY));
+  const [loading,   setLoading]   = useState(!cacheGet(VA_DASH_KEY));
   const [error,     setError]     = useState("");
   const [shiftTab,  setShiftTab]  = useState("morning");
 
   function fetchData() {
+    cacheClear(VA_DASH_KEY);
     setLoading(true); setError("");
     apiFetch("/api/eod/dashboard")
-      .then(d => setData(d))
+      .then(d => {
+        cacheSet(VA_DASH_KEY, d);
+        setData(d);
+      })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   }
 
-  useEffect(() => { fetchData(); }, []);
+  useEffect(() => {
+    if (cacheGet(VA_DASH_KEY)) return;
+    fetchData();
+  }, []);
 
   const stats = data?.stats || {};
   const rows  = data ? (data[shiftTab] || []) : [];

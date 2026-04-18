@@ -1,25 +1,26 @@
-import { useState }                  from "react";
-import { signInWithEmailAndPassword } from "firebase/auth";
-import { auth }                      from "../../firebase";
+import { useState } from "react";
+import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
+import { auth } from "../../firebase";
 import { colors, font, radius, shadow } from "../../styles/tokens";
-import { Lock, Mail, AlertTriangle }  from "lucide-react";
-import { logActivity, LOG_TYPES }     from "../../utils/logger";
+import { Lock, Mail, AlertTriangle, Eye, EyeOff, CheckCircle2, ArrowLeft } from "lucide-react";
+import { logActivity, LOG_TYPES } from "../../utils/logger";
 
 export default function Login() {
-  const [email,    setEmail]    = useState("");
-  const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [mode,        setMode]        = useState("signin"); // "signin" | "forgot"
+  const [email,       setEmail]       = useState("");
+  const [password,    setPassword]    = useState("");
+  const [showPw,      setShowPw]      = useState(false);
+  const [error,       setError]       = useState("");
+  const [resetSent,   setResetSent]   = useState(false);
+  const [loading,     setLoading]     = useState(false);
 
-  async function handleSubmit(e) {
+  async function handleSignIn(e) {
     e.preventDefault();
     setError("");
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      // auth.currentUser is now set — log the sign-in
       logActivity(LOG_TYPES.SIGN_IN, `${email} signed in`);
-      // useAuth in App.jsx takes over from here
     } catch (err) {
       setError(friendlyError(err.code));
     } finally {
@@ -27,26 +28,47 @@ export default function Login() {
     }
   }
 
+  async function handleForgotPassword(e) {
+    e.preventDefault();
+    setError("");
+    setResetSent(false);
+    setLoading(true);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetSent(true);
+    } catch (err) {
+      setError(friendlyError(err.code));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function switchToForgot() {
+    setMode("forgot");
+    setError("");
+    setPassword("");
+    setResetSent(false);
+  }
+
+  function switchToSignIn() {
+    setMode("signin");
+    setError("");
+    setResetSent(false);
+  }
+
   return (
     <div style={s.page}>
       <div style={s.card}>
 
-        {/* Logo */}
-        <div style={s.logoWrap}>
-          <img
-            src="https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png"
-            alt="Monster Task"
-            style={{ width: 96, objectFit: "contain" }}
-          />
-        </div>
-
         {/* Heading */}
         <div style={{ textAlign: "center", marginBottom: 28 }}>
           <h1 style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary, margin: 0 }}>
-            MT Staff Portal
+            {mode === "signin" ? "MT Staff Portal" : "Reset Password"}
           </h1>
           <p style={{ fontSize: font.sm, color: colors.textMuted, marginTop: 6 }}>
-            Sign in to access the VA admin dashboard
+            {mode === "signin"
+              ? "Sign in to access the VA admin dashboard"
+              : "Enter your email to receive a password reset link"}
           </p>
         </div>
 
@@ -58,47 +80,119 @@ export default function Login() {
           </div>
         )}
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div>
-            <label style={s.label}>Email address</label>
-            <div style={s.inputWrap}>
-              <Mail size={15} color={colors.textFaint} style={s.inputIcon} />
-              <input
-                type="email" value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@monstertask.com"
-                required autoComplete="email"
-                style={s.input}
-                onFocus={(e) => e.target.style.borderColor = colors.teal}
-                onBlur={(e)  => e.target.style.borderColor = colors.border}
-              />
-            </div>
+        {/* Reset success */}
+        {resetSent && (
+          <div style={s.successBox}>
+            <CheckCircle2 size={15} color={colors.success} style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: font.sm, color: colors.success }}>
+              Password reset email sent. Check your inbox.
+            </span>
           </div>
+        )}
 
-          <div>
-            <label style={s.label}>Password</label>
-            <div style={s.inputWrap}>
-              <Lock size={15} color={colors.textFaint} style={s.inputIcon} />
-              <input
-                type="password" value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required autoComplete="current-password"
-                style={s.input}
-                onFocus={(e) => e.target.style.borderColor = colors.teal}
-                onBlur={(e)  => e.target.style.borderColor = colors.border}
-              />
+        {/* Sign In Form */}
+        {mode === "signin" && (
+          <form onSubmit={handleSignIn} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <label style={s.label}>Email address</label>
+              <div style={s.inputWrap}>
+                <Mail size={15} color={colors.textFaint} style={s.inputIcon} />
+                <input
+                  type="email" value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@monstertask.com"
+                  required autoComplete="email"
+                  style={s.input}
+                  onFocus={(e) => e.target.style.borderColor = colors.teal}
+                  onBlur={(e)  => e.target.style.borderColor = colors.border}
+                />
+              </div>
             </div>
-          </div>
 
-          <button
-            type="submit" disabled={loading}
-            style={{ ...s.btn, opacity: loading ? 0.75 : 1, cursor: loading ? "not-allowed" : "pointer" }}
-          >
-            {loading ? "Signing in…" : "Sign In"}
-          </button>
-        </form>
+            <div>
+              <label style={s.label}>Password</label>
+              <div style={s.inputWrap}>
+                <Lock size={15} color={colors.textFaint} style={s.inputIcon} />
+                <input
+                  type={showPw ? "text" : "password"} value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  required autoComplete="current-password"
+                  style={{ ...s.input, paddingRight: 42 }}
+                  onFocus={(e) => e.target.style.borderColor = colors.teal}
+                  onBlur={(e)  => e.target.style.borderColor = colors.border}
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPw(!showPw)}
+                  style={s.eyeBtn}
+                  tabIndex={-1}
+                >
+                  {showPw
+                    ? <EyeOff size={16} color={colors.textFaint} />
+                    : <Eye size={16} color={colors.textFaint} />}
+                </button>
+              </div>
+            </div>
+
+            <button
+              type="submit" disabled={loading}
+              style={{ ...s.btn, opacity: loading ? 0.75 : 1, cursor: loading ? "not-allowed" : "pointer" }}
+            >
+              {loading ? "Signing in…" : "Sign In"}
+            </button>
+
+            {/* Forgot password link */}
+            <button
+              type="button"
+              onClick={switchToForgot}
+              style={s.linkBtn}
+            >
+              Forgot password?
+            </button>
+          </form>
+        )}
+
+        {/* Forgot Password Form */}
+        {mode === "forgot" && (
+          <form onSubmit={handleForgotPassword} style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div>
+              <label style={s.label}>Email address</label>
+              <div style={s.inputWrap}>
+                <Mail size={15} color={colors.textFaint} style={s.inputIcon} />
+                <input
+                  type="email" value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@monstertask.com"
+                  required autoComplete="email"
+                  style={s.input}
+                  onFocus={(e) => e.target.style.borderColor = colors.teal}
+                  onBlur={(e)  => e.target.style.borderColor = colors.border}
+                />
+              </div>
+            </div>
+
+            <button
+              type="submit" disabled={loading || resetSent}
+              style={{
+                ...s.btn,
+                opacity: (loading || resetSent) ? 0.75 : 1,
+                cursor: (loading || resetSent) ? "not-allowed" : "pointer",
+              }}
+            >
+              {loading ? "Sending…" : resetSent ? "Email Sent" : "Send Reset Link"}
+            </button>
+
+            <button
+              type="button"
+              onClick={switchToSignIn}
+              style={{ ...s.linkBtn, display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}
+            >
+              <ArrowLeft size={13} />
+              Back to sign in
+            </button>
+          </form>
+        )}
 
         <p style={{ textAlign: "center", fontSize: font.xs, color: colors.textFaint, marginTop: 24 }}>
           Access is restricted to MT Staff only.
@@ -117,7 +211,8 @@ function friendlyError(code) {
     case "auth/too-many-requests":      return "Too many attempts. Please wait and try again.";
     case "auth/user-disabled":          return "This account has been disabled.";
     case "auth/network-request-failed": return "Network error. Check your connection.";
-    default:                            return "Sign-in failed. Please try again.";
+    case "auth/missing-email":          return "Please enter your email address.";
+    default:                            return "Something went wrong. Please try again.";
   }
 }
 
@@ -132,14 +227,14 @@ const s = {
     padding: "40px 40px 32px", width: "100%", maxWidth: 420,
     boxShadow: shadow.lg,
   },
-  logoWrap: {
-    display: "flex", justifyContent: "center",
-    marginBottom: 24, paddingBottom: 24,
-    borderBottom: `1px solid ${colors.border}`,
-  },
   errorBox: {
     display: "flex", alignItems: "center", gap: 8,
     background: colors.dangerLight, border: `1px solid ${colors.dangerBorder}`,
+    borderRadius: radius.md, padding: "10px 14px", marginBottom: 16,
+  },
+  successBox: {
+    display: "flex", alignItems: "center", gap: 8,
+    background: "#E8F7EE", border: `1px solid #B7E4C7`,
     borderRadius: radius.md, padding: "10px 14px", marginBottom: 16,
   },
   label: {
@@ -155,9 +250,21 @@ const s = {
     color: colors.textPrimary, background: colors.surface,
     boxSizing: "border-box", transition: "border-color .12s",
   },
+  eyeBtn: {
+    position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)",
+    background: "none", border: "none", cursor: "pointer", padding: 4,
+    display: "flex", alignItems: "center", justifyContent: "center",
+  },
   btn: {
     width: "100%", background: colors.teal, color: "#fff",
     border: "none", borderRadius: radius.md, padding: "12px 0",
     fontSize: font.base, fontWeight: 800, fontFamily: font.family, marginTop: 4,
+  },
+  linkBtn: {
+    background: "none", border: "none",
+    color: colors.teal, fontSize: font.sm, fontWeight: 600,
+    cursor: "pointer", fontFamily: font.family,
+    textAlign: "center", padding: "4px 0",
+    textDecoration: "none",
   },
 };
