@@ -23,6 +23,7 @@ import { canAccessPage, showComingSoon, getRoleLabel } from "../../utils/roles";
 import ErrorBoundary from "../ui/ErrorBoundary";
 import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/reportCache";
 
+import { useInactivityTimeout } from "../../hooks/useInactivityTimeout";
 
 const NAV = [
   { id: "dashboard",           icon: LayoutDashboard, label: "Dashboard",          sub: "Overview",            component: Dashboard },
@@ -43,6 +44,7 @@ const SIDEBAR_COLLAPSED = 64;
 
 export default function Layout({ user, staff }) {
   const role = staff?.role || "sme";
+  useInactivityTimeout(); 
   const allowedNav = NAV.filter(item => canAccessPage(role, item.id));
 
   const [activeTab, setActiveTab] = useState("dashboard");

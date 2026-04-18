@@ -1,22 +1,32 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { signInWithEmailAndPassword, sendPasswordResetEmail } from "firebase/auth";
 import { auth } from "../../firebase";
 import { colors, font, radius, shadow } from "../../styles/tokens";
-import { Lock, Mail, AlertTriangle, Eye, EyeOff, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Lock, Mail, AlertTriangle, Eye, EyeOff, CheckCircle2, ArrowLeft, Clock } from "lucide-react";
 import { logActivity, LOG_TYPES } from "../../utils/logger";
 
 export default function Login() {
-  const [mode,        setMode]        = useState("signin"); // "signin" | "forgot"
-  const [email,       setEmail]       = useState("");
-  const [password,    setPassword]    = useState("");
-  const [showPw,      setShowPw]      = useState(false);
-  const [error,       setError]       = useState("");
-  const [resetSent,   setResetSent]   = useState(false);
-  const [loading,     setLoading]     = useState(false);
+  const [mode,      setMode]      = useState("signin"); // "signin" | "forgot"
+  const [email,     setEmail]     = useState("");
+  const [password,  setPassword]  = useState("");
+  const [showPw,    setShowPw]    = useState(false);
+  const [error,     setError]     = useState("");
+  const [resetSent, setResetSent] = useState(false);
+  const [loading,   setLoading]   = useState(false);
+
+  // Inactivity logout notice
+  const [inactive, setInactive] = useState(
+    () => sessionStorage.getItem("mt_inactivity_logout") === "1"
+  );
+
+  useEffect(() => {
+    if (inactive) sessionStorage.removeItem("mt_inactivity_logout");
+  }, [inactive]);
 
   async function handleSignIn(e) {
     e.preventDefault();
     setError("");
+    setInactive(false);
     setLoading(true);
     try {
       await signInWithEmailAndPassword(auth, email, password);
@@ -48,6 +58,7 @@ export default function Login() {
     setError("");
     setPassword("");
     setResetSent(false);
+    setInactive(false);
   }
 
   function switchToSignIn() {
@@ -72,6 +83,16 @@ export default function Login() {
           </p>
         </div>
 
+        {/* Inactivity notice */}
+        {mode === "signin" && inactive && !error && (
+          <div style={s.warnBox}>
+            <Clock size={15} color="#B45309" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: font.sm, color: "#78350F" }}>
+              You were signed out due to inactivity. Please sign in again.
+            </span>
+          </div>
+        )}
+
         {/* Error */}
         {error && (
           <div style={s.errorBox}>
@@ -83,8 +104,8 @@ export default function Login() {
         {/* Reset success */}
         {resetSent && (
           <div style={s.successBox}>
-            <CheckCircle2 size={15} color={colors.success} style={{ flexShrink: 0 }} />
-            <span style={{ fontSize: font.sm, color: colors.success }}>
+            <CheckCircle2 size={15} color="#16A34A" style={{ flexShrink: 0 }} />
+            <span style={{ fontSize: font.sm, color: "#14532D" }}>
               Password reset email sent. Check your inbox.
             </span>
           </div>
@@ -142,7 +163,6 @@ export default function Login() {
               {loading ? "Signing in…" : "Sign In"}
             </button>
 
-            {/* Forgot password link */}
             <button
               type="button"
               onClick={switchToForgot}
@@ -234,7 +254,12 @@ const s = {
   },
   successBox: {
     display: "flex", alignItems: "center", gap: 8,
-    background: "#E8F7EE", border: `1px solid #B7E4C7`,
+    background: "#E8F7EE", border: "1px solid #B7E4C7",
+    borderRadius: radius.md, padding: "10px 14px", marginBottom: 16,
+  },
+  warnBox: {
+    display: "flex", alignItems: "center", gap: 8,
+    background: "#FEF3C7", border: "1px solid #FCD34D",
     borderRadius: radius.md, padding: "10px 14px", marginBottom: 16,
   },
   label: {
@@ -265,6 +290,5 @@ const s = {
     color: colors.teal, fontSize: font.sm, fontWeight: 600,
     cursor: "pointer", fontFamily: font.family,
     textAlign: "center", padding: "4px 0",
-    textDecoration: "none",
   },
 };
