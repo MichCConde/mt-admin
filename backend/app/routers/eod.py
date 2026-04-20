@@ -175,7 +175,6 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
             ]
 
             if not active_contracts:
-                # Main VAs (and CBAs without contracts) use VA-level shift
                 ci  = va_cis[0] if va_cis else None
                 eod = va_eod_list[0] if va_eod_list else None
                 rows.append(build_report_row(
@@ -184,7 +183,7 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
             else:
                 for con in active_contracts:
                     con_client = con["client_name"]
-                    con_ci, ci_nv  = fuzzy_find_clockin(va_cis, con_client)
+                    con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
                     con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
                     rows.append(build_report_row(
                         va, con_client, comm, con_ci, con_eod,

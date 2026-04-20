@@ -1,16 +1,31 @@
 from app.notion import clock_in_punctuality
+from app.services.shift import parse_shift_time, format_shift_time, va_shift_block
+
 
 def build_report_row(va, client, community, clockin_rec, eod_rec,
-                     shift_time_fallback, needs_verification):
-    """Build a single row for the combined Reports table."""
+                     needs_verification, contract=None):
+    """
+    Build a single row for the combined Reports table.
 
-    # Per-contract expected start: prefer matched EOD's Time In,
-    # then VA's shift time, then default 9 AM
+    Punctuality precedence:
+      1. EOD record's Time In (if submitted)
+      2. Contract's Shift Start
+      3. VA's own Shift Start (Main VAs / CBA with no contract shift)
+      4. Empty → clock_in_punctuality defaults to 9:00 AM
+    """
     expected_start = ""
     if eod_rec and eod_rec.get("time_in"):
         expected_start = eod_rec["time_in"]
+
+    if not expected_start and contract:
+        parsed = parse_shift_time(contract.get("start_shift", ""))
+        if parsed:
+            expected_start = format_shift_time(*parsed)
+
     if not expected_start:
-        expected_start = shift_time_fallback or ""
+        block = va_shift_block(va)
+        if block:
+            expected_start = format_shift_time(block["start_h"], block["start_m"])
 
     # Clock-in
     if clockin_rec:

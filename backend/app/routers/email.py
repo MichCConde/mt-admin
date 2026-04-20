@@ -61,15 +61,6 @@ def _build_report(date_str: str) -> dict:
     for r in eod_cba:
         cba_eod_by_va.setdefault(r["name"].strip().lower(), []).append(r)
 
-    shift_lookup: dict[str, str] = {}
-    for va in vas:
-        k  = va["name"].strip().lower()
-        l  = k.split()[-1]
-        st = va.get("shift_time", "")
-        if st:
-            shift_lookup.setdefault(k, st)
-            shift_lookup.setdefault(l, st)
-
     working_vas = [va for va in vas if va_works_on_date(va, date_str)]
     rows = []
 
@@ -78,7 +69,6 @@ def _build_report(date_str: str) -> dict:
         va_last = key.split()[-1]
         va_cis  = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
         comm    = va.get("community", "")
-        shift_fallback = shift_lookup.get(key) or shift_lookup.get(va_last, "")
 
         eod_source = main_eod_by_va if comm == "Main" else cba_eod_by_va
         va_eod_list = eod_source.get(key, [])
@@ -97,14 +87,15 @@ def _build_report(date_str: str) -> dict:
         if not active_contracts:
             ci  = va_cis[0] if va_cis else None
             eod = va_eod_list[0] if va_eod_list else None
-            rows.append(build_report_row(va, None, comm, ci, eod, shift_fallback, False))
+            rows.append(build_report_row(va, None, comm, ci, eod, False, contract=None))
         else:
             for con in active_contracts:
                 con_client = con["client_name"]
                 con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
                 con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
                 rows.append(build_report_row(
-                    va, con_client, comm, con_ci, con_eod, shift_fallback, ci_nv or eod_nv
+                    va, con_client, comm, con_ci, con_eod,
+                    ci_nv or eod_nv, contract=con
                 ))
 
     clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
