@@ -136,7 +136,8 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             "late_submissions": late,
         }
     except Exception as e:
-        raise safe_error(e) 
+        raise safe_error(e)
+
 
 # ── Combined Report route ─────────────────────────────────────────
 
@@ -238,6 +239,8 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── Live Shift Dashboard route ────────────────────────────────────
+
 @router.get("/dashboard")
 def get_va_dashboard():
     """
@@ -310,7 +313,7 @@ def get_va_dashboard():
                 eod = va_eod_list[0] if va_eod_list else None
 
                 rows.append(_build_dashboard_row(
-                    va, None, comm, block, ci, eod
+                    va, None, comm, block, ci, eod, now
                 ))
             else:
                 for con in active_contracts:
@@ -326,7 +329,7 @@ def get_va_dashboard():
                     con_eod, _ = fuzzy_find_eod(va_eod_list, con_client)
 
                     rows.append(_build_dashboard_row(
-                        va, con_client, comm, block, con_ci, con_eod
+                        va, con_client, comm, block, con_ci, con_eod, now
                     ))
 
         # ── Bucket rows by shift period ───────────────────────────
@@ -355,10 +358,11 @@ def get_va_dashboard():
             "mid":       mid,
             "afternoon": afternoon,
             "stats": {
-                "total":      len(rows),
-                "clocked_in": sum(1 for r in rows if r["status"] == "Clocked In"),
+                "total":       len(rows),
+                "clocked_in":  sum(1 for r in rows if r["status"] == "Clocked In"),
                 "clocked_out": sum(1 for r in rows if r["status"] == "Clocked Out"),
-                "absent":     sum(1 for r in rows if r["status"] == "Absent"),
+                "absent":      sum(1 for r in rows if r["status"] == "Absent"),
+                "upcoming":    sum(1 for r in rows if r["status"] == "Upcoming"),
             },
         }
 
@@ -391,7 +395,7 @@ def _match_shift_block(blocks: list, client_name: str) -> dict | None:
     return blocks[0]
 
 
-def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_rec):
+def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_rec, now):
     """Build a single row for the VA shift dashboard."""
     from app.notion import clock_in_punctuality
 
@@ -428,7 +432,17 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
         clock_in_late   = 0
         clock_in_early  = 0
 
-    # Status: Clocked In / Clocked Out / Absent
+    # Has the shift started yet?
+    shift_started = True
+    if shift_start_h is not None:
+        shift_time_today = now.replace(
+            hour=shift_start_h,
+            minute=shift_start_m or 0,
+            second=0, microsecond=0,
+        )
+        shift_started = now >= shift_time_today
+
+    # Status: Clocked In / Clocked Out / Upcoming / Absent
     has_clockin = clockin_rec is not None
     has_eod     = eod_rec is not None
 
@@ -436,6 +450,8 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
         status = "Clocked Out"
     elif has_clockin and not has_eod:
         status = "Clocked In"
+    elif not shift_started:
+        status = "Upcoming"
     else:
         status = "Absent"
 

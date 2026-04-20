@@ -845,7 +845,10 @@ function ReportsTab() {
                       <td style={td}>
                         {r.clock_in
                           ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
-                          : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>}
+                          : r.status === "Upcoming"
+                            ? <span style={{ color: colors.textFaint }}>—</span>
+                            : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                        }
                       </td>
                       <td style={td}>
                         <StatusCell
@@ -1018,10 +1021,13 @@ function ShiftTabBar({ tabs, active, onChange }) {
 }
 
 function StatusBadgeDash({ status }) {
+  if (status === "Upcoming") {
+    return <span style={{ color: colors.textFaint, fontWeight: 600 }}>—</span>;
+  }
   const config = {
     "Clocked In":  { color: colors.teal,    bg: colors.tealLight,    border: colors.tealMid },
-    "Clocked Out": { color: colors.success,  bg: colors.successLight, border: colors.successBorder },
-    "Absent":      { color: colors.danger,   bg: colors.dangerLight,  border: colors.dangerBorder },
+    "Clocked Out": { color: colors.success, bg: colors.successLight, border: colors.successBorder },
+    "Absent":      { color: colors.danger,  bg: colors.dangerLight,  border: colors.dangerBorder },
   };
   const c = config[status] || config["Absent"];
   return (
@@ -1169,11 +1175,13 @@ function DashboardTab() {
                     <td style={td}>
                       {r.status === "Absent"
                         ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
-                        : <PunctualityCell
-                            status={r.clock_in_status}
-                            minutesLate={r.clock_in_minutes_late}
-                            minutesEarly={r.clock_in_minutes_early}
-                          />
+                        : r.status === "Upcoming"
+                          ? <span style={{ color: colors.textFaint }}>—</span>
+                          : <PunctualityCell
+                              status={r.clock_in_status}
+                              minutesLate={r.clock_in_minutes_late}
+                              minutesEarly={r.clock_in_minutes_early}
+                            />
                       }
                     </td>
                     <td style={td}>
