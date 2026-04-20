@@ -1169,7 +1169,9 @@ function DashboardTab() {
                     <td style={td}>
                       {r.clock_in
                         ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
-                        : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                        : r.status === "Upcoming"
+                          ? <span style={{ color: colors.textFaint }}>—</span>
+                          : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
                       }
                     </td>
                     <td style={td}>

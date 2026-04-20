@@ -416,6 +416,12 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
     expected_start = ""
     if eod_rec and eod_rec.get("time_in"):
         expected_start = eod_rec["time_in"]
+    if not expected_start and shift_block and shift_block.get("start_h") is not None:
+        h = shift_block["start_h"]
+        m = shift_block.get("start_m") or 0
+        h12 = 12 if h == 0 else (h - 12 if h > 12 else h)
+        ampm = "AM" if h < 12 else "PM"
+        expected_start = f"{h12}:{m:02d}{ampm}"
     if not expected_start and va.get("shift_time"):
         expected_start = va["shift_time"]
 
