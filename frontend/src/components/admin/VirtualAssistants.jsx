@@ -28,6 +28,33 @@ const TABS = [
   { id: "cba",        label: "CBA"           },
 ];
 
+function fmtShift(s) {
+  if (!s) return "—";
+  const parts = String(s).trim().split(":");
+  const h = parseInt(parts[0], 10);
+  const m = parseInt(parts[1] || "0", 10);
+  if (isNaN(h)) return s;
+  const ap  = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${ap}`;
+}
+
+// Collect shift blocks for a VA — from contracts (CBA) or VA-level (Main)
+function getVAShifts(va) {
+  const shifts = [];
+  if (va.contracts && va.contracts.length > 0) {
+    for (const c of va.contracts) {
+      if (c.start_shift) {
+        shifts.push({ start: c.start_shift, end: c.end_shift, client: c.client_name });
+      }
+    }
+  }
+  if (shifts.length === 0 && va.start_shift) {
+    shifts.push({ start: va.start_shift, end: va.end_shift, client: "" });
+  }
+  return shifts;
+}
+
 function fmtDate(iso) {
   if (!iso) return "—";
   return new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
@@ -220,20 +247,49 @@ function VAModal({ va, onClose }) {
         </div>
 
         <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
-          <Card title="Profile">
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {[
-                [Mail,     "MT Email",   va.email      || "—"],
-                [Phone,    "Phone",      va.phone      || "—"],
-                [Calendar, "Start Date", fmtDate(va.start_date)],
-              ].map(([Icon, label, value]) => (
-                <div key={label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <Icon size={14} color={colors.textMuted} style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>{label}</span>
-                  <span style={{ fontSize: font.sm, color: colors.textBody }}>{value}</span>
+          <Card title="Profile">  
+            {(() => {
+              const shifts = getVAShifts(va);
+              const singleShift = shifts.length <= 1;
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {[
+                    [Mail,     "MT Email",   va.email || "—"],
+                    [Phone,    "Phone",      va.phone || "—"],
+                    [Calendar, "Start Date", fmtDate(va.start_date)],
+                    ...(singleShift ? [
+                      [Clock, "Shift Start", fmtShift(shifts[0]?.start)],
+                      [Clock, "Shift End",   fmtShift(shifts[0]?.end)],
+                    ] : []),
+                  ].map(([Icon, label, value]) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                      <Icon size={14} color={colors.textMuted} style={{ flexShrink: 0 }} />
+                      <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>{label}</span>
+                      <span style={{ fontSize: font.sm, color: colors.textBody }}>{value}</span>
+                    </div>
+                  ))}
+
+                  {/* Multi-contract CBA VAs — show shifts grouped by client */}
+                  {!singleShift && (
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
+                      <Clock size={14} color={colors.textMuted} style={{ flexShrink: 0, marginTop: 2 }} />
+                      <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>
+                        Shifts ({shifts.length})
+                      </span>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
+                        {shifts.map((s, i) => (
+                          <div key={i} style={{ fontSize: font.sm, color: colors.textBody }}>
+                            <span style={{ fontWeight: 600 }}>{s.client}:</span>{" "}
+                            <span>{fmtShift(s.start)} – {fmtShift(s.end)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ))}
-            </div>
+              );
+            })()}
           </Card>
 
           <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>

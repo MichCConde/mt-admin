@@ -48,12 +48,12 @@ def get_active_vas() -> list:
             "community":      get_prop(p, "Community "),
             "email":          get_prop(p, "MT Email Address"),
             "phone":          get_prop(p, "Phone"),
-            "start_date":     get_prop(p, "Start Date"),
+            "start_date":     get_prop(p, "MT Start Date"),      
             "schedule":       get_prop(p, "Schedule"),
             "schedule_notes": get_prop(p, "Schedule Notes"),
             "contract_ids":   get_prop(p, "Contracts"),
-            "start_shift":    get_prop(p, "Start Shift"),   # ← NEW
-            "end_shift":      get_prop(p, "End Shift"),     # ← NEW
+            "start_shift":    get_prop(p, "Shift Start"),      
+            "end_shift":      get_prop(p, "Shift End"),        
             "status":         status,
         })
 
