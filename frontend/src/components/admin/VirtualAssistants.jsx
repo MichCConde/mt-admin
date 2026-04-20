@@ -991,9 +991,9 @@ export default function VirtualAssistants() {
 }
 
 const SHIFT_TABS = [
-  { id: "morning",   label: "Morning Shift",   sub: "7:00 AM – 10:00 AM" },
+  { id: "morning",   label: "Morning Shift",   sub: "5:00 AM – 10:00 AM" },
   { id: "mid",       label: "Mid Shift",       sub: "10:00 AM – 3:00 PM" },
-  { id: "afternoon", label: "Afternoon Shift",  sub: "3:00 PM – 5:00 PM"  },
+  { id: "afternoon", label: "Afternoon Shift", sub: "3:00 PM – 10:00 PM" },
 ];
 
 function ShiftTabBar({ tabs, active, onChange }) {
@@ -1013,6 +1013,47 @@ function ShiftTabBar({ tabs, active, onChange }) {
             <div style={{ fontSize: font.xs, fontWeight: 500, color: isActive ? colors.teal : colors.textFaint, marginTop: 2 }}>
               {t.sub}
             </div>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function CommunityFilter({ value, onChange }) {
+  const options = [
+    { id: "all",  label: "All"    },
+    { id: "cba",  label: "CBA"    },
+    { id: "main", label: "Agency" },
+  ];
+  return (
+    <div style={{
+      display: "flex",
+      border: `1px solid ${colors.border}`,
+      borderRadius: radius.md,
+      overflow: "hidden",
+      background: colors.surface,
+    }}>
+      {options.map((opt, i) => {
+        const isActive = opt.id === value;
+        return (
+          <button
+            key={opt.id}
+            onClick={() => onChange(opt.id)}
+            style={{
+              padding: "6px 14px",
+              background: isActive ? colors.teal : "transparent",
+              color: isActive ? "#fff" : colors.textMuted,
+              border: "none",
+              borderLeft: i > 0 ? `1px solid ${colors.border}` : "none",
+              fontSize: font.xs,
+              fontWeight: 700,
+              cursor: "pointer",
+              fontFamily: font.family,
+              transition: "background .15s, color .15s",
+            }}
+          >
+            {opt.label}
           </button>
         );
       })}
@@ -1058,6 +1099,7 @@ function DashboardTab() {
   const [loading,   setLoading]   = useState(!cacheGet(VA_DASH_KEY));
   const [error,     setError]     = useState("");
   const [shiftTab,  setShiftTab]  = useState("morning");
+  const [community, setCommunity] = useState("all");   // NEW
 
   function fetchData() {
     cacheClear(VA_DASH_KEY);
@@ -1076,8 +1118,31 @@ function DashboardTab() {
     fetchData();
   }, []);
 
-  const stats = data?.stats || {};
-  const rows  = data ? (data[shiftTab] || []) : [];
+  // ── Filtering ─────────────────────────────────────────────────
+  function matchCommunity(r) {
+    if (community === "all")  return true;
+    if (community === "cba")  return r.community === "CBA";
+    if (community === "main") return r.community === "Main";
+    return true;
+  }
+
+  // Combine ALL rows (across all shifts) for stat totals, filtered by community
+  const allRows = data
+    ? [...(data.morning || []), ...(data.mid || []), ...(data.afternoon || [])]
+    : [];
+  const filteredAllRows = allRows.filter(matchCommunity);
+
+  // Rows shown in the table — filtered by both shift AND community
+  const shiftRows = data ? (data[shiftTab] || []) : [];
+  const rows      = shiftRows.filter(matchCommunity);
+
+  // Stats reflect the community filter (so "23 Clocked In" means 23 *in this community*)
+  const stats = {
+    total:       filteredAllRows.length,
+    clocked_in:  filteredAllRows.filter(r => r.status === "Clocked In").length,
+    clocked_out: filteredAllRows.filter(r => r.status === "Clocked Out").length,
+    absent:      filteredAllRows.filter(r => r.status === "Absent").length,
+  };
 
   const th = {
     padding: "10px 12px", fontSize: font.xs, fontWeight: 700,
@@ -1093,7 +1158,7 @@ function DashboardTab() {
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
       {/* Header row */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
           <div style={{ fontSize: font.lg, fontWeight: 800, color: colors.textPrimary }}>
             Live Shift Dashboard
@@ -1107,19 +1172,23 @@ function DashboardTab() {
             }
           </div>
         </div>
-        <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
-          {loading ? "Loading…" : "Refresh"}
-        </Button>
+
+        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+          <CommunityFilter value={community} onChange={setCommunity} />
+          <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
+            {loading ? "Loading…" : "Refresh"}
+          </Button>
+        </div>
       </div>
 
       {/* Stat cards */}
       {data && (
         <StatRow>
-          <StatCard icon={Users}     label="Working Today"  value={stats.total ?? 0} />
-          <StatCard icon={Clock}     label="Clocked In"     value={stats.clocked_in ?? 0}  highlight="teal" />
-          <StatCard icon={UserCheck} label="Clocked Out"    value={stats.clocked_out ?? 0} highlight="success" />
-          <StatCard icon={UserX}     label="Absent"         value={stats.absent ?? 0}
-            highlight={(stats.absent ?? 0) > 0 ? "danger" : "success"} />
+          <StatCard icon={Users}     label="Working Today" value={stats.total} />
+          <StatCard icon={Clock}     label="Clocked In"    value={stats.clocked_in}  highlight="teal" />
+          <StatCard icon={UserCheck} label="Clocked Out"   value={stats.clocked_out} highlight="success" />
+          <StatCard icon={UserX}     label="Absent"        value={stats.absent}
+            highlight={stats.absent > 0 ? "danger" : "success"} />
         </StatRow>
       )}
 
@@ -1135,7 +1204,10 @@ function DashboardTab() {
         </div>
       ) : rows.length === 0 ? (
         <StatusBox variant="info">
-          No VAs scheduled for the {SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.
+          {community === "all"
+            ? `No VAs scheduled for the ${SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.`
+            : `No ${community === "cba" ? "CBA" : "Agency"} VAs scheduled for this shift.`
+          }
         </StatusBox>
       ) : (
         <Card noPadding>
@@ -1191,12 +1263,12 @@ function DashboardTab() {
                     </td>
                     <td style={td}>
                       {r.status === "Clocked Out"
-                        ? <span style={{ fontWeight: 500 }}>{(r.clock_out || "").replace(" EST", "")}</span>
+                        ? <span style={{ fontWeight: 500 }}>{r.clock_out?.replace(" EST", "") || "—"}</span>
                         : <span style={{ color: colors.textFaint }}>—</span>
                       }
                     </td>
                     <td style={td}>
-                      {r.status === "Clocked Out" && r.clock_out_status
+                      {r.status === "Clocked Out"
                         ? <PunctualityCell
                             status={r.clock_out_status}
                             minutesLate={r.clock_out_minutes_late}

@@ -97,3 +97,35 @@ def contract_shift_block(contract: dict, label: str = "") -> dict | None:
         "display":   f"{fmt(start_h, start_m)} – {fmt(end_h, end_m)} EST"
                      + (f" ({client})" if client else ""),
     }
+
+def va_shift_block(va: dict) -> dict | None:
+    """
+    Build a shift_block from a VA's own Start Shift / End Shift fields.
+    Used for Main VAs (who don't have contracts) and as fallback for
+    CBA VAs whose contracts haven't been populated yet.
+
+    Returns None if the VA has no Start Shift set.
+    """
+    start = parse_shift_time(va.get("start_shift", ""))
+    end   = parse_shift_time(va.get("end_shift", ""))
+
+    if not start:
+        return None
+
+    start_h, start_m = start
+    end_h, end_m     = end if end else (start_h, start_m)
+
+    def fmt(h, mins):
+        ap  = "PM" if h >= 12 else "AM"
+        h12 = h % 12 or 12
+        return f"{h12}:{str(mins).zfill(2)} {ap}"
+
+    return {
+        "start_h":   start_h,
+        "start_m":   start_m,
+        "end_h":     end_h,
+        "end_m":     end_m,
+        "label":     "",
+        "raw":       f"{fmt(start_h, start_m)} - {fmt(end_h, end_m)}",
+        "display":   f"{fmt(start_h, start_m)} – {fmt(end_h, end_m)} EST",
+    }

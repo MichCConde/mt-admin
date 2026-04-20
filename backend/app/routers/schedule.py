@@ -1,7 +1,6 @@
-import re
 from fastapi import APIRouter, HTTPException
 from app.notion import get_active_vas, get_active_contracts_by_id
-from app.services.shift import contract_shift_block
+from app.services.shift import contract_shift_block, va_shift_block
 
 router = APIRouter()
 
@@ -15,81 +14,13 @@ SCHEDULE_DAYS = {
 ALL_DAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
 
 
-# ── Legacy shift-string parser (kept for VAs with no contracts) ──
-
-def parse_shift_blocks(shift_time_str: str) -> list[dict]:
-    """
-    Parse a freeform VA Shift Time string into structured blocks.
-    Used ONLY as a legacy fallback for VAs with no active contracts.
-    New primary source: each contract's Start Shift / End Shift.
-    """
-    if not shift_time_str:
-        return []
-
-    segments = re.split(r'<br\s*/?>\s*|[\n;]+', shift_time_str, flags=re.IGNORECASE)
-
-    blocks = []
-    for seg in segments:
-        seg = seg.strip()
-        if not seg:
-            continue
-
-        label_match = re.search(r'\(([^)]+)\)', seg)
-        label = label_match.group(1).strip() if label_match else ""
-        seg_clean = re.sub(r'\([^)]+\)', '', seg).strip()
-        seg_clean = re.sub(r'12\s*[Nn][Nn]', '12PM', seg_clean)
-
-        pattern = (
-            r'(\d{1,2}(?::\d{2})?)\s*'
-            r'(AM|PM|am|pm)?\s*'
-            r'[-–]\s*'
-            r'(\d{1,2}(?::\d{2})?)\s*'
-            r'(AM|PM|am|pm)?'
-        )
-        m = re.search(pattern, seg_clean, re.IGNORECASE)
-        if not m:
-            continue
-
-        def to_24h(num_str, ampm, fallback_ampm="AM"):
-            parts = num_str.split(":")
-            h = int(parts[0])
-            mins = int(parts[1]) if len(parts) > 1 else 0
-            ap = (ampm or fallback_ampm or "AM").upper()
-            if ap == "PM" and h != 12: h += 12
-            elif ap == "AM" and h == 12: h = 0
-            return h, mins
-
-        start_ampm = m.group(2)
-        end_ampm   = m.group(4)
-        start_h, start_m = to_24h(m.group(1), start_ampm)
-        inferred_end_ampm = end_ampm or start_ampm or "AM"
-        end_h, end_m = to_24h(m.group(3), end_ampm, inferred_end_ampm)
-        if end_h <= start_h and not end_ampm:
-            end_h_alt, end_m_alt = to_24h(m.group(3), "PM")
-            if end_h_alt > start_h:
-                end_h, end_m = end_h_alt, end_m_alt
-
-        def fmt(h, mins):
-            ap = "PM" if h >= 12 else "AM"
-            h12 = h % 12 or 12
-            return f"{h12}:{str(mins).zfill(2)} {ap}"
-
-        blocks.append({
-            "start_h": start_h, "start_m": start_m,
-            "end_h": end_h, "end_m": end_m,
-            "label": label, "raw": seg.strip(),
-            "display": f"{fmt(start_h, start_m)} – {fmt(end_h, end_m)} EST"
-                       + (f" ({label})" if label else ""),
-        })
-    return blocks
-
+# ── Build shift blocks exclusively from contracts ────────────────
 
 def _build_va_shift_blocks(va: dict, contracts_by_id: dict) -> list[dict]:
     """
     Build shift blocks for a VA:
-      - Prefer contract-based blocks (one per active contract with Start Shift set)
-      - For contracts without Start Shift, skip (they'll show up as no-shift)
-      - If VA has no active contracts at all, fall back to legacy shift_time parsing
+      1. One block per active contract that has Start Shift set
+      2. If no contract blocks, fall back to the VA's own Start Shift / End Shift
     """
     active_contracts = [
         contracts_by_id[cid]
@@ -97,17 +28,18 @@ def _build_va_shift_blocks(va: dict, contracts_by_id: dict) -> list[dict]:
         if cid in contracts_by_id
     ]
 
-    if active_contracts:
-        blocks = []
-        for con in active_contracts:
-            b = contract_shift_block(con, label=con["client_name"])
-            if b:
-                blocks.append(b)
-        if blocks:
-            return blocks
-        # All contracts exist but none have Start Shift — fall through to legacy
+    blocks = []
+    for con in active_contracts:
+        b = contract_shift_block(con, label=con["client_name"])
+        if b:
+            blocks.append(b)
 
-    return parse_shift_blocks(va.get("shift_time", ""))
+    if blocks:
+        return blocks
+
+    # No contract-level shifts found — try VA-level as fallback
+    va_block = va_shift_block(va)
+    return [va_block] if va_block else []
 
 
 # ── Schedule page route ──────────────────────────────────────────
@@ -179,7 +111,7 @@ def _get_available_slots(shift_blocks: list, slot_defs: list) -> list[str]:
 
 @router.get("/availability")
 def get_availability():
-    """CBA VAs with open slots — powered by contract-level shift blocks."""
+    """CBA VAs with open slots — powered exclusively by contract-level shift blocks."""
     try:
         vas             = get_active_vas()
         contracts_by_id = get_active_contracts_by_id()

@@ -8,7 +8,7 @@ from app.notion import (
 )
 from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clockin
 from app.services.report import build_report_row
-from app.services.shift import contract_shift_block
+from app.services.shift import contract_shift_block, va_shift_block, format_shift_time
 from app.middleware.security import validate_date, safe_error
 
 router = APIRouter()
@@ -151,16 +151,6 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
         for r in eod_cba:
             cba_eod_by_va.setdefault(r["name"].strip().lower(), []).append(r)
 
-        # Legacy VA shift_time lookup (fallback only — used when contract has no Start Shift)
-        shift_lookup: dict[str, str] = {}
-        for va in vas:
-            k  = va["name"].strip().lower()
-            l  = k.split()[-1]
-            st = va.get("shift_time", "")
-            if st:
-                shift_lookup.setdefault(k, st)
-                shift_lookup.setdefault(l, st)
-
         working_vas = [va for va in vas if va_works_on_date(va, date)]
         rows = []
 
@@ -169,7 +159,6 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
             va_last = key.split()[-1]
             va_cis  = name_to_clockins.get(key) or name_to_clockins.get(va_last, [])
             comm    = va.get("community", "")
-            shift_fallback = shift_lookup.get(key) or shift_lookup.get(va_last, "")
 
             eod_source = main_eod_by_va if comm == "Main" else cba_eod_by_va
             va_eod_list = eod_source.get(key, [])
@@ -186,19 +175,20 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
             ]
 
             if not active_contracts:
+                # Main VAs (and CBAs without contracts) use VA-level shift
                 ci  = va_cis[0] if va_cis else None
                 eod = va_eod_list[0] if va_eod_list else None
                 rows.append(build_report_row(
-                    va, None, comm, ci, eod, shift_fallback, False, contract=None
+                    va, None, comm, ci, eod, False, contract=None
                 ))
             else:
                 for con in active_contracts:
                     con_client = con["client_name"]
-                    con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
+                    con_ci, ci_nv  = fuzzy_find_clockin(va_cis, con_client)
                     con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
                     rows.append(build_report_row(
                         va, con_client, comm, con_ci, con_eod,
-                        shift_fallback, ci_nv or eod_nv, contract=con
+                        ci_nv or eod_nv, contract=con
                     ))
 
         clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
@@ -219,16 +209,14 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Live Shift Dashboard route ────────────────────────────────────
+# ── Live Shift Dashboard route ───────────────────────────────────
 @router.get("/dashboard")
 def get_va_dashboard():
     """
     Real-time shift dashboard for today.
-    Shift time comes from each contract's Start Shift / End Shift fields.
+    Shift time: prefer contract's Start Shift, fall back to VA's Start Shift.
     """
     try:
-        from app.routers.schedule import parse_shift_blocks  # legacy fallback
-
         now  = datetime.now(tz=EST)
         date = now.strftime("%Y-%m-%d")
 
@@ -276,22 +264,19 @@ def get_va_dashboard():
                 if cid in contracts_by_id
             ]
 
-            # Legacy VA-level blocks — only used when contract has no Start Shift
-            legacy_blocks = parse_shift_blocks(va.get("shift_time", ""))
-
             if not active_contracts:
-                block = legacy_blocks[0] if legacy_blocks else None
+                # Main VAs (and CBAs with no contracts) — use VA's own Shift Start
+                block = va_shift_block(va)
                 ci  = va_cis[0] if va_cis else None
                 eod = va_eod_list[0] if va_eod_list else None
                 rows.append(_build_dashboard_row(va, None, comm, block, ci, eod, now))
             else:
                 for con in active_contracts:
                     con_client = con["client_name"]
-
-                    # Prefer contract's Start/End Shift; fall back to VA-level legacy block
                     block = contract_shift_block(con, label=con_client)
+                    # Fallback to VA-level shift if contract has no Shift Start
                     if not block:
-                        block = _match_legacy_block(legacy_blocks, con_client)
+                        block = va_shift_block(va)
 
                     con_ci, _  = fuzzy_find_clockin(va_cis, con_client)
                     con_eod, _ = fuzzy_find_eod(va_eod_list, con_client)
@@ -300,13 +285,15 @@ def get_va_dashboard():
                         va, con_client, comm, block, con_ci, con_eod, now
                     ))
 
-        # Bucket by shift period
+        # Bucket by shift period — matches frontend SHIFT_TABS display ranges
         morning, mid, afternoon = [], [], []
         for r in rows:
             h = r["shift_start_h"]
-            if h is not None and h < 10:
+            if h is None:
+                afternoon.append(r)
+            elif h < 10:
                 morning.append(r)
-            elif h is not None and h < 15:
+            elif h < 15:
                 mid.append(r)
             else:
                 afternoon.append(r)
@@ -334,37 +321,15 @@ def get_va_dashboard():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ── Helpers ───────────────────────────────────────────────────────
-
-def _match_legacy_block(blocks: list, client_name: str) -> dict | None:
-    """Match a legacy VA shift block to a contract by parenthesized label."""
-    if not blocks:
-        return None
-    if len(blocks) == 1:
-        return blocks[0]
-
-    client_lower = client_name.strip().lower() if client_name else ""
-    for b in blocks:
-        label = b.get("label", "").strip().lower()
-        if label and client_lower:
-            if label == client_lower:
-                return b
-            if client_lower.startswith(label) or label.startswith(client_lower):
-                return b
-            if label.split()[0] == client_lower.split()[0]:
-                return b
-    return blocks[0]
-
+# ── Dashboard row builder ────────────────────────────────────────
 
 def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_rec, now):
     """Build a single row for the VA shift dashboard."""
     from app.notion import clock_in_punctuality
-    from app.services.shift import format_shift_time
 
     if shift_block:
-        shift_display = shift_block.get("raw", "")
         import re
-        shift_display = re.sub(r'\([^)]+\)', '', shift_display).strip()
+        shift_display = re.sub(r'\([^)]+\)', '', shift_block.get("raw", "")).strip()
         shift_start_h = shift_block["start_h"]
         shift_start_m = shift_block["start_m"]
     else:
@@ -372,14 +337,12 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
         shift_start_h = None
         shift_start_m = None
 
-    # Expected start: prefer EOD Time In, then contract/block, then VA fallback
+    # Expected start: prefer EOD Time In, then shift block
     expected_start = ""
     if eod_rec and eod_rec.get("time_in"):
         expected_start = eod_rec["time_in"]
     if not expected_start and shift_start_h is not None:
         expected_start = format_shift_time(shift_start_h, shift_start_m or 0)
-    if not expected_start and va.get("shift_time"):
-        expected_start = va["shift_time"]
 
     if clockin_rec:
         ci_p = clock_in_punctuality(clockin_rec["created_time"], expected_start)
