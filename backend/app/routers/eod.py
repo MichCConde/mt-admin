@@ -332,10 +332,14 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
         shift_display = re.sub(r'\([^)]+\)', '', shift_block.get("raw", "")).strip()
         shift_start_h = shift_block["start_h"]
         shift_start_m = shift_block["start_m"]
+        shift_end_h   = shift_block.get("end_h")
+        shift_end_m   = shift_block.get("end_m")
     else:
         shift_display = "—"
         shift_start_h = None
         shift_start_m = None
+        shift_end_h   = None
+        shift_end_m   = None
 
     # Expected start: prefer EOD Time In, then shift block
     expected_start = ""
@@ -363,6 +367,14 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
             second=0, microsecond=0,
         )
         shift_started = now >= shift_time_today
+
+    shift_ended = False
+    if shift_end_h is not None:
+        shift_end_today = now.replace(
+            hour=shift_end_h, minute=shift_end_m or 0,
+            second=0, microsecond=0,
+        )
+        shift_ended = now >= shift_end_today
 
     has_clockin = clockin_rec is not None
     has_eod     = eod_rec is not None
@@ -400,6 +412,7 @@ def _build_dashboard_row(va, client, community, shift_block, clockin_rec, eod_re
         "shift_time":              shift_display,
         "shift_start_h":           shift_start_h,
         "shift_start_m":           shift_start_m,
+        "shift_ended":             shift_ended,
         "clock_in":                clock_in,
         "clock_in_status":         clock_in_status,
         "clock_in_minutes_late":   clock_in_late,

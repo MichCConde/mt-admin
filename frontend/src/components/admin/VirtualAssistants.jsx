@@ -1320,7 +1320,9 @@ function DashboardTab() {
                     <td style={td}>
                       {r.status === "Clocked Out"
                         ? <span style={{ fontWeight: 500 }}>{r.clock_out?.replace(" EST", "") || "—"}</span>
-                        : <span style={{ color: colors.textFaint }}>—</span>
+                        : r.status === "Clocked In" && r.shift_ended
+                          ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                          : <span style={{ color: colors.textFaint }}>—</span>
                       }
                     </td>
                     <td style={td}>
@@ -1330,7 +1332,9 @@ function DashboardTab() {
                             minutesLate={r.clock_out_minutes_late}
                             minutesEarly={r.clock_out_minutes_early}
                           />
-                        : <span style={{ color: colors.textFaint }}>—</span>
+                        : r.status === "Clocked In" && r.shift_ended
+                          ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                          : <span style={{ color: colors.textFaint }}>—</span>
                       }
                     </td>
                   </tr>
