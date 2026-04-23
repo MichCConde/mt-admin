@@ -6,6 +6,7 @@ import { StatCard, CommunityBadge, StatusBadge } from "../ui/Indicators";
 import { Card, PageHeader, StatRow } from "../ui/Structure";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import Button from "../ui/Button";
+import { VANameLink } from "../../contexts/VAProfileContext";
 
 // ── Action badge for activity feed ────────────────────────────────
 function ActionBadge({ action }) {
@@ -107,7 +108,7 @@ function ActivityFeed({ feed, date }) {
                   <td style={td}>
                     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <CommunityBadge community={row.community} />
-                      <span style={{ fontWeight: 600, color: colors.textPrimary }}>{row.va_name}</span>
+                      <VANameLink name={row.va_name} style={{ fontWeight: 600, color: colors.textPrimary }} />
                     </div>
                   </td>
                   <td style={td}>
@@ -140,7 +141,7 @@ function VARow({ va, badge, i }) {
     }}>
       <CommunityBadge community={va.community} />
       <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-        {va.name}
+        <VANameLink name={va.name} />
       </span>
       {badge}
     </div>

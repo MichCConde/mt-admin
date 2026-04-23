@@ -179,16 +179,21 @@ def get_eow_report(
                     for con in active_contracts:
                         con_client = con["client_name"]
 
+                        # Per-contract EOD (fuzzy) — done first so eod_needs_v is defined
+                        con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
+                        reports = [con_eod] if con_eod else []
+                        va_all_eod.extend(reports)
+
                         # Per-contract clock-in (fuzzy)
                         contract_clocked_in = False
-                        needs_verification  = False
+                        needs_verification  = eod_needs_v  # start with EOD's verification flag
                         for ci in va_clockins:
                             is_match, needs_v = match_client_name(
                                 ci.get("client", ""), con_client
                             )
                             if is_match:
                                 contract_clocked_in = True
-                                needs_verification = needs_verification or eod_needs_v
+                                needs_verification = needs_verification or needs_v
                                 break
 
                         # Per-contract EOD (fuzzy)

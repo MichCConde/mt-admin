@@ -1,25 +1,22 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import {
-  X, FileCheck, Timer, CheckCircle2, XCircle,
-  ChevronDown, ChevronUp, Mail, Phone, Calendar, Users, RefreshCw,
+  FileCheck, CheckCircle2,
+  Users, RefreshCw,
   Search, Send, AlertTriangle, Clock, UserX, UserCheck,
 } from "lucide-react";
 import { colors, font, radius, shadow }         from "../../styles/tokens";
 import { apiFetch }                             from "../../api";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
-import { Card, PageHeader, TabBar, SectionLabel, StatRow } from "../ui/Structure";
-import { Avatar, CommunityBadge, StatCard, StatusBadge, StatusBox, Tag } from "../ui/Indicators";
-import { Select, NumberInput }                  from "../ui/Inputs";
+import { Card, PageHeader, TabBar, StatRow }    from "../ui/Structure";
+import { Avatar, CommunityBadge, StatCard, StatusBadge, StatusBox } from "../ui/Indicators";
 import Button                                   from "../ui/Button";
 import { logActivity, LOG_TYPES }               from "../../utils/logger";
+import FilterPill from "../ui/FilterPill";
+import { useVAProfile, VANameLink } from "../../contexts/VAProfileContext";
 
 const CACHE_KEY = CACHE_KEYS.VA_LIST;
 
 // ── Constants ─────────────────────────────────────────────────────
-const MONTHS = ["January","February","March","April","May","June",
-                "July","August","September","October","November","December"];
-const MONTH_OPTIONS = MONTHS.map((m, i) => ({ value: i + 1, label: m }));
-
 const TABS = [
   { id: "dashboard",  label: "Dashboard"     },
   { id: "reports",    label: "Reports"       },
@@ -27,40 +24,6 @@ const TABS = [
   { id: "main",       label: "Agency"        },
   { id: "cba",        label: "CBA"           },
 ];
-
-function fmtShift(s) {
-  if (!s) return "—";
-  const parts = String(s).trim().split(":");
-  const h = parseInt(parts[0], 10);
-  const m = parseInt(parts[1] || "0", 10);
-  if (isNaN(h)) return s;
-  const ap  = h >= 12 ? "PM" : "AM";
-  const h12 = h % 12 || 12;
-  return `${h12}:${String(m).padStart(2, "0")} ${ap}`;
-}
-
-// Collect shift blocks for a VA — from contracts (CBA) or VA-level (Main)
-function getVAShifts(va) {
-  const shifts = [];
-  if (va.contracts && va.contracts.length > 0) {
-    for (const c of va.contracts) {
-      if (c.start_shift) {
-        shifts.push({ start: c.start_shift, end: c.end_shift, client: c.client_name });
-      }
-    }
-  }
-  if (shifts.length === 0 && va.start_shift) {
-    shifts.push({ start: va.start_shift, end: va.end_shift, client: "" });
-  }
-  return shifts;
-}
-
-function fmtDate(iso) {
-  if (!iso) return "—";
-  return new Date(iso + "T12:00:00").toLocaleDateString("en-US", {
-    month: "short", day: "numeric", year: "numeric",
-  });
-}
 
 function todayISO() {
   return new Date().toISOString().split("T")[0];
@@ -78,11 +41,12 @@ const labelStyle = {
 };
 
 // ── VA Row in the list ────────────────────────────────────────────
-function VAListRow({ va, onClick, i }) {
+function VAListRow({ va, i }) {
+  const { openVAProfile } = useVAProfile();
   const clientCount = va.contract_ids?.length ?? 0;
   return (
     <button
-      onClick={() => onClick(va)}
+      onClick={() => openVAProfile(va.name)}
       style={{
         display: "flex", alignItems: "center", gap: 14,
         width: "100%", padding: "12px 20px",
@@ -127,223 +91,6 @@ function CachedBanner({ cacheKey, onRefresh, loading }) {
         Refresh
       </Button>
     </div>
-  );
-}
-
-// ── ReportCard (expandable EOD entry in modal) ────────────────────
-function ReportCard({ report: r, community }) {
-  const [expanded, setExpanded] = useState(false);
-  const isLate  = !r.punctuality?.on_time;
-  const isCBA   = community === "CBA";
-  const Chevron = expanded ? ChevronUp : ChevronDown;
-  const dateLabel = new Date(r.date + "T12:00:00").toLocaleDateString("en-US", {
-    weekday: "short", month: "short", day: "numeric",
-  });
-  return (
-    <div style={{
-      border: `1px solid ${isLate ? colors.warningBorder : colors.border}`,
-      borderRadius: radius.md, overflow: "hidden",
-    }}>
-      <button
-        onClick={() => setExpanded(v => !v)}
-        style={{
-          display: "flex", alignItems: "center", gap: 10,
-          width: "100%", padding: "10px 14px",
-          background: isLate ? colors.warningLight : colors.surfaceAlt,
-          border: "none", cursor: "pointer", fontFamily: font.family,
-          borderBottom: expanded ? `1px solid ${isLate ? colors.warningBorder : colors.border}` : "none",
-          textAlign: "left",
-        }}
-      >
-        <span style={{ flex: 1, fontWeight: 600, fontSize: font.sm, color: colors.textPrimary }}>{dateLabel}</span>
-        {r.client && <span style={{ fontSize: font.xs, color: colors.textMuted }}>{r.client}</span>}
-        {isLate
-          ? <StatusBadge variant="warning">{r.punctuality.submitted_est} · {r.punctuality.minutes_late}m late</StatusBadge>
-          : <StatusBadge variant="success">On Time · {r.punctuality?.submitted_est}</StatusBadge>
-        }
-        <Chevron size={13} color={colors.textMuted} />
-      </button>
-      {expanded && (
-        <div style={{ padding: "10px 14px", display: "flex", flexDirection: "column", gap: 6 }}>
-          {[
-            ["Time In",  r.time_in  || "—"],
-            ["Time Out", r.time_out || "—"],
-            ...(isCBA ? [
-              ["New Leads",    r.new_leads    ?? "—"],
-              ["Email Apps",   r.email_apps   ?? "—"],
-              ["Website Apps", r.website_apps ?? "—"],
-              ["Follow-Ups",   r.follow_ups   ?? "—"],
-            ] : []),
-          ].map(([label, value]) => (
-            <div key={label} style={{ display: "flex", gap: 10 }}>
-              <span style={{ fontSize: font.xs, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>{label}</span>
-              <span style={{ fontSize: font.sm, color: colors.textBody }}>{value}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── VA Modal ──────────────────────────────────────────────────────
-function VAModal({ va, onClose }) {
-  const now = new Date();
-  const [year,    setYear]    = useState(now.getFullYear());
-  const [month,   setMonth]   = useState(now.getMonth() + 1);
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState("");
-
-  const fetchData = useCallback(async () => {
-    setLoading(true); setError(""); setData(null);
-    try {
-      const result = await apiFetch(
-        `/api/inspector?va_name=${encodeURIComponent(va.name)}&year=${year}&month=${month}`
-      );
-      setData(result);
-      logActivity(LOG_TYPES.VA_INSPECT, `Viewed ${va.name} profile for ${MONTHS[month - 1]} ${year}`, { va: va.name, month, year });
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }, [va.name, year, month]);
-
-  useEffect(() => { fetchData(); }, [fetchData]);
-  useEffect(() => {
-    document.body.style.overflow = "hidden";
-    return () => { document.body.style.overflow = ""; };
-  }, []);
-
-  return (
-    <>
-      <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(13,31,60,0.45)", zIndex: 100 }} />
-      <div style={{
-        position: "fixed", top: 0, right: 0,
-        height: "100vh", width: "min(580px, 95vw)",
-        background: colors.surface, boxShadow: "-8px 0 32px rgba(0,0,0,0.15)",
-        zIndex: 101, display: "flex", flexDirection: "column",
-        overflowY: "auto", fontFamily: font.family,
-      }}>
-        {/* Header */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 14,
-          padding: "20px 24px", borderBottom: `1px solid ${colors.border}`,
-          background: colors.surfaceAlt, position: "sticky", top: 0, zIndex: 10,
-        }}>
-          <Avatar name={va.name} size={48} />
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>{va.name}</div>
-            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
-              <CommunityBadge community={va.community} />
-              <span style={{ fontSize: font.xs, color: colors.textMuted }}>{va.schedule || "No schedule set"}</span>
-            </div>
-          </div>
-          <button onClick={onClose} style={{
-            background: colors.surfaceAlt, border: `1px solid ${colors.border}`,
-            borderRadius: radius.md, padding: "6px 8px", cursor: "pointer",
-            display: "flex", alignItems: "center",
-          }}>
-            <X size={16} color={colors.textMuted} />
-          </button>
-        </div>
-
-        <div style={{ padding: "20px 24px", display: "flex", flexDirection: "column", gap: 24 }}>
-          <Card title="Profile">  
-            {(() => {
-              const shifts = getVAShifts(va);
-              const singleShift = shifts.length <= 1;
-
-              return (
-                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                  {[
-                    [Mail,     "MT Email",   va.email || "—"],
-                    [Phone,    "Phone",      va.phone || "—"],
-                    [Calendar, "Start Date", fmtDate(va.start_date)],
-                    ...(singleShift ? [
-                      [Clock, "Shift Start", fmtShift(shifts[0]?.start)],
-                      [Clock, "Shift End",   fmtShift(shifts[0]?.end)],
-                    ] : []),
-                  ].map(([Icon, label, value]) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <Icon size={14} color={colors.textMuted} style={{ flexShrink: 0 }} />
-                      <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>{label}</span>
-                      <span style={{ fontSize: font.sm, color: colors.textBody }}>{value}</span>
-                    </div>
-                  ))}
-
-                  {/* Multi-contract CBA VAs — show shifts grouped by client */}
-                  {!singleShift && (
-                    <div style={{ display: "flex", gap: 10, alignItems: "flex-start" }}>
-                      <Clock size={14} color={colors.textMuted} style={{ flexShrink: 0, marginTop: 2 }} />
-                      <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, minWidth: 90 }}>
-                        Shifts ({shifts.length})
-                      </span>
-                      <div style={{ display: "flex", flexDirection: "column", gap: 4, flex: 1 }}>
-                        {shifts.map((s, i) => (
-                          <div key={i} style={{ fontSize: font.sm, color: colors.textBody }}>
-                            <span style={{ fontWeight: 600 }}>{s.client}:</span>{" "}
-                            <span>{fmtShift(s.start)} – {fmtShift(s.end)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
-          </Card>
-
-          <div style={{ display: "flex", gap: 10, alignItems: "flex-end" }}>
-            <Select label="Month" value={month} onChange={e => setMonth(Number(e.target.value))} options={MONTH_OPTIONS} style={{ flex: 1 }} />
-            <NumberInput label="Year" value={year} onChange={setYear} min={2023} max={2030} style={{ width: 90 }} />
-          </div>
-
-          {error && <StatusBox variant="danger">{error}</StatusBox>}
-          {loading && <div style={{ textAlign: "center", color: colors.textMuted, fontSize: font.sm, padding: "20px 0" }}>Loading reports…</div>}
-
-          {data && (
-            <>
-              <StatRow>
-                <StatCard icon={FileCheck}    label="Reports"  value={data.submitted_count} />
-                <StatCard icon={CheckCircle2} label="On Time"  value={data.on_time_count}   highlight="success" />
-                <StatCard icon={Timer}        label="Late"     value={data.late_count}      highlight={data.late_count > 0 ? "warning" : "success"} />
-                <StatCard
-                  icon={data.missing_days.length > 0 ? XCircle : CheckCircle2}
-                  label="Missing" value={data.missing_days.length}
-                  highlight={data.missing_days.length > 0 ? "danger" : "success"}
-                />
-              </StatRow>
-
-              {data.missing_days.length > 0 && (
-                <div>
-                  <SectionLabel>Missing EOD Days</SectionLabel>
-                  <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                    {data.missing_days.map((d, i) => (
-                      <Tag key={i} variant="danger">
-                        {new Date(d + "T12:00:00").toLocaleDateString("en-US", { month: "short", day: "numeric" })}
-                      </Tag>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              <div>
-                <SectionLabel>EOD Reports ({data.reports.length}) · {MONTHS[data.month - 1]} {data.year}</SectionLabel>
-                {data.reports.length === 0
-                  ? <StatusBox variant="info">No EOD reports found for {MONTHS[data.month - 1]} {data.year}.</StatusBox>
-                  : <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {data.reports.map((r, i) => <ReportCard key={i} report={r} community={data.va.community} />)}
-                    </div>
-                }
-              </div>
-
-              {data.missing_days.length === 0 && data.submitted_count > 0 && (
-                <StatusBox variant="success">No missing EOD reports for {MONTHS[data.month - 1]} {data.year}.</StatusBox>
-              )}
-            </>
-          )}
-        </div>
-      </div>
-    </>
   );
 }
 
@@ -431,7 +178,9 @@ function EODTab() {
                   background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
                 }}>
                   <CommunityBadge community={va.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{va.name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    <VANameLink name={va.name} />
+                  </span>
                   {va.missing_client && <StatusBadge variant="info">{va.missing_client}</StatusBadge>}
                   <StatusBadge variant={va.clocked_in ? "warning" : "danger"}>
                     {va.clocked_in ? "No EOD" : "No Clock-in"}
@@ -451,7 +200,9 @@ function EODTab() {
                   background: i % 2 === 0 ? colors.warningLight : "#FFFBEB",
                 }}>
                   <CommunityBadge community={r.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{r.name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    <VANameLink name={r.name} />
+                  </span>
                   {r.client && <span style={{ fontSize: font.xs, color: colors.textMuted }}>{r.client}</span>}
                   <StatusBadge variant="warning">{r.punctuality?.submitted_est} · {r.punctuality?.minutes_late}m late</StatusBadge>
                 </div>
@@ -469,7 +220,9 @@ function EODTab() {
                   background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
                 }}>
                   <CommunityBadge community={r.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{r.name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    <VANameLink name={r.name} />
+                  </span>
                   {r.client && <span style={{ fontSize: font.xs, color: colors.textMuted }}>{r.client}</span>}
                   <StatusBadge variant="success">{r.punctuality?.submitted_est}</StatusBadge>
                 </div>
@@ -509,7 +262,13 @@ function AttendanceTab() {
     const asterisk = c.needs_verification
       ? <span title="Client name needs manual verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
       : null;
-    return <>{name}{asterisk}</>;
+    // Only link when we have a real VA name (not a raw/unmatched attendance entry)
+    return (
+      <>
+        {c.va_name ? <VANameLink name={c.va_name} /> : name}
+        {asterisk}
+      </>
+    );
   }
 
   return (
@@ -561,7 +320,9 @@ function AttendanceTab() {
                   background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
                 }}>
                   <CommunityBadge community={va.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>{va.name}</span>
+                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
+                    <VANameLink name={va.name} />
+                  </span>
                   <StatusBadge variant="danger">No record</StatusBadge>
                 </div>
               ))}
@@ -611,36 +372,6 @@ function AttendanceTab() {
         </>
       )}
     </div>
-  );
-}
-
-// ── Filter pill component ─────────────────────────────────────────
-function FilterPill({ label, count, active, onClick, color }) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "inline-flex", alignItems: "center", gap: 6,
-        padding: "6px 14px", borderRadius: 20,
-        border: active ? `2px solid ${color}` : `1.5px solid ${colors.border}`,
-        background: active ? `${color}10` : colors.surface,
-        color: active ? color : colors.textMuted,
-        fontWeight: 700, fontSize: font.sm, fontFamily: font.family,
-        cursor: "pointer", transition: "all .12s",
-      }}
-    >
-      {label}
-      {count != null && (
-        <span style={{
-          background: active ? color : colors.surfaceAlt,
-          color: active ? "#fff" : colors.textMuted,
-          borderRadius: 10, padding: "1px 8px",
-          fontSize: font.xs, fontWeight: 800, minWidth: 20, textAlign: "center",
-        }}>
-          {count}
-        </span>
-      )}
-    </button>
   );
 }
 
@@ -889,7 +620,7 @@ function ReportsTab() {
                   {filtered.map((r, i) => (
                     <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
                       <td style={{ ...td, fontWeight: 600, color: colors.textPrimary }}>
-                        {r.va_name}
+                        <VANameLink name={r.va_name} />
                         {r.needs_verification && (
                           <span title="Client name needs verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
                         )}
@@ -943,7 +674,6 @@ export default function VirtualAssistants() {
   const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
   const [activeTab, setActiveTab] = useState("dashboard");
-  const [selected,  setSelected]  = useState(null);
 
   useEffect(() => {
     if (cacheGet(CACHE_KEY)) return;
@@ -1033,13 +763,12 @@ export default function VirtualAssistants() {
               <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>No VAs found.</div>
             )}
             {filtered.map((va, i) => (
-              <VAListRow key={va.id || i} va={va} onClick={setSelected} i={i} />
+              <VAListRow key={va.id || i} va={va} i={i} />
             ))}
           </div>
         </>
       )}
 
-      {selected && <VAModal va={selected} onClose={() => setSelected(null)} />}
     </div>
   );
 }
@@ -1067,47 +796,6 @@ function ShiftTabBar({ tabs, active, onChange }) {
             <div style={{ fontSize: font.xs, fontWeight: 500, color: isActive ? colors.teal : colors.textFaint, marginTop: 2 }}>
               {t.sub}
             </div>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function CommunityFilter({ value, onChange }) {
-  const options = [
-    { id: "all",  label: "All"    },
-    { id: "cba",  label: "CBA"    },
-    { id: "main", label: "Agency" },
-  ];
-  return (
-    <div style={{
-      display: "flex",
-      border: `1px solid ${colors.border}`,
-      borderRadius: radius.md,
-      overflow: "hidden",
-      background: colors.surface,
-    }}>
-      {options.map((opt, i) => {
-        const isActive = opt.id === value;
-        return (
-          <button
-            key={opt.id}
-            onClick={() => onChange(opt.id)}
-            style={{
-              padding: "6px 14px",
-              background: isActive ? colors.teal : "transparent",
-              color: isActive ? "#fff" : colors.textMuted,
-              border: "none",
-              borderLeft: i > 0 ? `1px solid ${colors.border}` : "none",
-              fontSize: font.xs,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: font.family,
-              transition: "background .15s, color .15s",
-            }}
-          >
-            {opt.label}
           </button>
         );
       })}
@@ -1334,7 +1022,10 @@ function DashboardTab() {
                     <td style={td}>
                       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                         <CommunityBadge community={r.community} />
-                        <span style={{ fontWeight: 600, color: colors.textPrimary }}>{r.va_name}</span>
+                        <VANameLink
+                          name={r.va_name}
+                          style={{ fontWeight: 600, color: colors.textPrimary }}
+                        />
                       </div>
                     </td>
                     <td style={td}>{r.client}</td>

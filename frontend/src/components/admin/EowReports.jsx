@@ -1,7 +1,7 @@
 import { useState, useEffect }              from "react";
 import { Search, ChevronDown, ChevronUp,
          Clock, UserX, FileCheck, Flag,
-         Copy, Users, RefreshCw }            from "lucide-react";
+         Copy, Users, RefreshCw, AlertTriangle } from "lucide-react";
 import { colors, font, radius, shadow }      from "../../styles/tokens";
 import { apiFetch }                          from "../../api";
 import { cacheSet, cacheGet, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
@@ -10,6 +10,8 @@ import { Card, PageHeader, StatRow, TabBar } from "../ui/Structure";
 import { StatCard, StatusBadge, CommunityBadge, StatusBox, Avatar } from "../ui/Indicators";
 import { Select }                            from "../ui/Inputs";
 import { logActivity, LOG_TYPES }            from "../../utils/logger";
+import FilterPill from "../ui/FilterPill";
+import { VANameLink } from "../../contexts/VAProfileContext";
 
 const CACHE_ALL = CACHE_KEYS.EOW_ALL;
 const CACHE_VA  = CACHE_KEYS.EOW_VA;
@@ -178,17 +180,18 @@ function VARow({ summary, workdays }) {
   const Chevron  = expanded ? ChevronUp : ChevronDown;
   return (
     <div style={{ border: `1px solid ${hasFlags ? colors.dangerBorder : colors.border}`, borderRadius: radius.lg, overflow: "hidden", boxShadow: shadow.card }}>
-      <button
-        onClick={() => setExpanded(v => !v)}
+      <div
         style={{
           display: "flex", alignItems: "center", gap: 12, width: "100%", padding: "13px 20px",
-          background: hasFlags ? colors.dangerLight : colors.surfaceAlt, border: "none",
+          background: hasFlags ? colors.dangerLight : colors.surfaceAlt,
           borderBottom: expanded ? `1px solid ${hasFlags ? colors.dangerBorder : colors.border}` : "none",
-          cursor: "pointer", fontFamily: font.family, textAlign: "left",
+          fontFamily: font.family, textAlign: "left",
         }}
       >
         <CommunityBadge community={community} />
-        <span style={{ flex: 1, fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>{va.name}</span>
+        <span style={{ flex: 1, fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>
+          <VANameLink name={va.name} />
+        </span>
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {stats.missing_count > 0     && <StatusBadge variant="danger">{stats.missing_count} missing</StatusBadge>}
           {stats.no_clockin_count > 0  && <StatusBadge variant="neutral">{stats.no_clockin_count} no clock-in</StatusBadge>}
@@ -197,8 +200,17 @@ function VARow({ summary, workdays }) {
           {flags.keywords.length > 0   && <StatusBadge variant="info">{flags.keywords.length} client flag{flags.keywords.length !== 1 ? "s" : ""}</StatusBadge>}
           {stats.flag_count === 0 && stats.missing_count === 0 && <StatusBadge variant="success">All clear</StatusBadge>}
         </div>
-        <Chevron size={15} color={colors.textMuted} style={{ flexShrink: 0 }} />
-      </button>
+        <button
+          onClick={() => setExpanded(v => !v)}
+          style={{
+            background: "none", border: "none", cursor: "pointer",
+            padding: 4, display: "flex", alignItems: "center",
+          }}
+          aria-label={expanded ? "Collapse" : "Expand"}
+        >
+          <Chevron size={15} color={colors.textMuted} style={{ flexShrink: 0 }} />
+        </button>
+      </div>
       {expanded && (
         <div style={{ padding: "16px 20px", display: "flex", flexDirection: "column", gap: 16 }}>
           <WeeklyGrid daily={daily} workdays={workdays} community={community} />
@@ -232,11 +244,14 @@ function CachedBanner({ cacheKey, onRefresh, loading }) {
 // ── All VAs Tab ───────────────────────────────────────────────────
 function AllVAsTab() {
   const def = getWeekRange();
-  const [start,   setStart]   = useState(def.start);
-  const [end,     setEnd]     = useState(def.end);
-  const [data,    setData]    = useState(() => cacheGet(CACHE_ALL));
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState("");
+  const [start,     setStart]     = useState(def.start);
+  const [end,       setEnd]       = useState(def.end);
+  const [data,      setData]      = useState(() => cacheGet(CACHE_ALL));
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState("");
+  const [community, setCommunity] = useState("all");
+  const [issue,     setIssue]     = useState("all");
+  const [search,    setSearch]    = useState("");
 
   async function run(force = false) {
     if (!force) {
@@ -252,6 +267,41 @@ function AllVAsTab() {
     } catch (e) { setError(e.message); }
     finally { setLoading(false); }
   }
+
+  // ── Filter logic ──────────────────────────────────────────────
+  const summaries = data?.va_summaries ?? [];
+
+  function matchCommunity(s) {
+    if (community === "all")  return true;
+    if (community === "cba")  return s.community === "CBA";
+    if (community === "main") return s.community === "Main";
+    return true;
+  }
+
+  function matchSearch(s) {
+    if (!search) return true;
+    return (s.va.name || "").toLowerCase().includes(search.toLowerCase());
+  }
+
+  function matchIssue(s) {
+    if (issue === "all")             return true;
+    if (issue === "missing_eod")     return s.stats.missing_count    > 0;
+    if (issue === "missing_clockin") return s.stats.no_clockin_count > 0;
+    if (issue === "flagged")         return s.stats.flag_count       > 0;
+    return true;
+  }
+
+  // Apply community first — counts for the issue row reflect the chosen community
+  const byCommunity = summaries.filter(matchCommunity);
+
+  const issueCounts = {
+    all:             byCommunity.length,
+    missing_eod:     byCommunity.filter(s => s.stats.missing_count    > 0).length,
+    missing_clockin: byCommunity.filter(s => s.stats.no_clockin_count > 0).length,
+    flagged:         byCommunity.filter(s => s.stats.flag_count       > 0).length,
+  };
+
+  const filtered = byCommunity.filter(matchIssue).filter(matchSearch);
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -272,36 +322,124 @@ function AllVAsTab() {
         <>
           <CachedBanner cacheKey={CACHE_ALL} onRefresh={() => run(true)} loading={loading} />
 
+          {/* Totals stat cards */}
           <StatRow>
-            <StatCard         icon={Users}  label="Active VAs"        value={data.total_vas} />
-            <FractionStatCard icon={UserX}  label="Missing EODs"      value={data.totals.missing_eod}  total={data.totals.possible_eod}     highlight={data.totals.missing_eod > 0 ? "danger" : "success"} />
-            <FractionStatCard icon={Clock}  label="No Clock-ins"      value={data.totals.no_clockin}   total={data.totals.possible_clockins} highlight={data.totals.no_clockin > 0 ? "warning" : "success"} />
-            <StatCard         icon={Copy}   label="Duplicate Reports" value={data.totals.duplicates}   highlight={data.totals.duplicates > 0 ? "danger" : "success"} />
-            <StatCard         icon={Flag}   label="Client Flags"      value={data.totals.keyword_flags} highlight={data.totals.keyword_flags > 0 ? "info" : "success"} />
+            <FractionStatCard icon={FileCheck} label="EODs Submitted"
+              value={(data.totals.possible_eod - data.totals.missing_eod)}
+              total={data.totals.possible_eod}
+              highlight={data.totals.missing_eod > 0 ? "danger" : "success"} />
+            <FractionStatCard icon={Clock}     label="Clock-ins"
+              value={(data.totals.possible_clockins - data.totals.no_clockin)}
+              total={data.totals.possible_clockins}
+              highlight={data.totals.no_clockin > 0 ? "warning" : "success"} />
+            <StatCard icon={Clock} label="Late Submissions"
+              value={data.totals.late}
+              highlight={data.totals.late > 0 ? "warning" : "success"} />
+            <StatCard icon={Flag}  label="Flag Total"
+              value={data.totals.duplicates + data.totals.keyword_flags}
+              highlight={(data.totals.duplicates + data.totals.keyword_flags) > 0 ? "danger" : "success"} />
           </StatRow>
 
-          {data.flags.length > 0 && (
-            <Card title={`⚑ ${data.flags.length} VA${data.flags.length !== 1 ? "s" : ""} Require Attention`} subtitle="Sorted by severity" noPadding>
-              {data.flags.map((f, i) => (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "11px 20px", borderTop: i > 0 ? `1px solid ${colors.border}` : "none", background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8" }}>
-                  <CommunityBadge community={f.community} />
-                  <span style={{ flex: 1, fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>{f.va_name}</span>
-                  {f.duplicates > 0    && <StatusBadge variant="danger">{f.duplicates} duplicate{f.duplicates !== 1 ? "s" : ""}</StatusBadge>}
-                  {f.keywords.length > 0 && <StatusBadge variant="info">{f.keywords.length} client flag{f.keywords.length !== 1 ? "s" : ""}</StatusBadge>}
-                </div>
-              ))}
-            </Card>
-          )}
+          {/* ── Community filter + search (top row) ──────────── */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Community:</span>
+            <FilterPill
+              label="All"
+              count={summaries.length}
+              active={community === "all"}
+              onClick={() => setCommunity("all")}
+              color={colors.teal}
+            />
+            <FilterPill
+              label="CBA"
+              count={summaries.filter(s => s.community === "CBA").length}
+              active={community === "cba"}
+              onClick={() => setCommunity("cba")}
+              color={colors.communityCBA}
+            />
+            <FilterPill
+              label="Agency"
+              count={summaries.filter(s => s.community === "Main").length}
+              active={community === "main"}
+              onClick={() => setCommunity("main")}
+              color={colors.communityMain}
+            />
+            <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+              <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search VA name…"
+                style={{
+                  paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                  border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                  fontSize: font.sm, fontFamily: font.family, outline: "none",
+                  background: colors.surface, color: colors.textPrimary, width: 220,
+                }}
+                onFocus={e => e.target.style.borderColor = colors.teal}
+                onBlur={e  => e.target.style.borderColor = colors.border}
+              />
+            </div>
+          </div>
 
+          {/* ── Issue filter (second row) ────────────────────── */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Issues:</span>
+            <FilterPill
+              label="All"
+              count={issueCounts.all}
+              active={issue === "all"}
+              onClick={() => setIssue("all")}
+              color={colors.teal}
+            />
+            <FilterPill
+              label="Missing Reports"
+              count={issueCounts.missing_eod}
+              active={issue === "missing_eod"}
+              onClick={() => setIssue("missing_eod")}
+              color={colors.danger}
+            />
+            <FilterPill
+              label="Missing Clock-ins"
+              count={issueCounts.missing_clockin}
+              active={issue === "missing_clockin"}
+              onClick={() => setIssue("missing_clockin")}
+              color={colors.warning}
+            />
+            <FilterPill
+              label="Flagged"
+              count={issueCounts.flagged}
+              active={issue === "flagged"}
+              onClick={() => setIssue("flagged")}
+              color="#7C3AED"
+            />
+          </div>
+
+          {/* VA list */}
           <div>
             <div style={{ fontSize: font.xs, fontWeight: 700, color: colors.textMuted, letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 12 }}>
-              All VAs — {fmtDate(data.start)} to {fmtDate(data.end)}
+              {filtered.length} of {summaries.length} VAs — {fmtDate(data.start)} to {fmtDate(data.end)}
             </div>
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {data.va_summaries.map((s, i) => (
-                <VARow key={i} summary={s} workdays={data.workdays} />
-              ))}
-            </div>
+
+            {filtered.length === 0 ? (
+              <StatusBox variant="info">
+                {search
+                  ? `No VAs matching "${search}".`
+                  : issue !== "all"
+                    ? `No VAs ${issue === "missing_eod" ? "with missing reports"
+                       : issue === "missing_clockin" ? "with missing clock-ins"
+                       : "flagged"} this week.`
+                    : "No VAs found for this filter."
+                }
+              </StatusBox>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                {filtered.map((s, i) => (
+                  <VARow key={i} summary={s} workdays={data.workdays} />
+                ))}
+              </div>
+            )}
           </div>
         </>
       )}
@@ -402,7 +540,9 @@ const vaOptions = (() => {
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <Avatar name={summary.va.name} size={48} />
             <div>
-              <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>{summary.va.name}</div>
+              <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>
+                <VANameLink name={summary.va.name} />
+              </div>
               <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
                 <CommunityBadge community={summary.community} />
                 <span style={{ fontSize: font.sm, color: colors.textMuted }}>

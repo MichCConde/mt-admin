@@ -8,6 +8,7 @@ import { Card, ControlBar, PageHeader, TabBar } from "../ui/Structure";
 import { Select }                              from "../ui/Inputs";
 import { Avatar, CommunityBadge, StatusBox }   from "../ui/Indicators";
 import { ths, tds, tableWrap }          from "../ui/Tables";
+import { VANameLink } from "../../contexts/VAProfileContext";
 
 const DAYS     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
@@ -253,7 +254,7 @@ function CommunityTab({ vas, community }) {
                     background:   rowIdx % 2 === 0 ? colors.surface : colors.surfaceAlt,
                     color:        colors.textPrimary,
                   }}>
-                    {va.name}
+                    <VANameLink name={va.name} />
                   </td>
                   {DAYS.map((day) => {
                     const works     = va.schedule_days?.includes(day);
@@ -327,7 +328,10 @@ function CommunityTab({ vas, community }) {
                 padding:      "8px 14px",
               }}>
                 <CommunityBadge community={va.community} />
-                <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.textMuted }}>{va.name}</span>
+                <VANameLink
+                  name={va.name}
+                  style={{ fontSize: font.sm, fontWeight: 600, color: colors.textMuted }}
+                />
                 <span style={{ fontSize: font.xs, color: colors.warning }}>Update in Notion</span>
               </div>
             ))}
@@ -406,7 +410,9 @@ function VAScheduleDetail({ va }) {
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
         <Avatar name={va.name} size={52} />
         <div>
-          <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>{va.name}</div>
+          <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>
+            <VANameLink name={va.name} />
+          </div>
           <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
             <CommunityBadge community={va.community} />
             <span style={{ fontSize: font.sm, color: colors.textMuted }}>{va.schedule || "No schedule set"}</span>
@@ -638,7 +644,9 @@ function ResultSection({ title, subtitle, items, headerBg, headerBorder }) {
           }}>
             <Icon size={18} color={cfg.color} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>{va.name}</div>
+              <div style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>
+                <VANameLink name={va.name} />
+              </div>
               <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {va.shift_blocks?.length > 0
                   ? va.shift_blocks.map((b, bi) => (
