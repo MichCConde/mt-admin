@@ -87,7 +87,7 @@ function VAListRow({ va, onClick, i }) {
         display: "flex", alignItems: "center", gap: 14,
         width: "100%", padding: "12px 20px",
         background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-        borderTop: `1px solid ${colors.border}`,
+        borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
         border: "none", cursor: "pointer", fontFamily: font.family,
         textAlign: "left", transition: "background .1s",
       }}
@@ -1009,19 +1009,17 @@ export default function VirtualAssistants() {
       {/* Directory tabs */}
       {!isReportTab && (
         <>
-          {/* Table header */}
+          {/* Table header — navy style to match Reports/Dashboard */}
           <div style={{
             display: "flex", alignItems: "center", gap: 14,
-            padding: "8px 20px",
-            background: colors.surfaceAlt,
-            borderBottom: `1px solid ${colors.border}`,
-            borderTop:    `1px solid ${colors.border}`,
+            padding: "10px 20px",
+            background: colors.navy,
             borderRadius: `${radius.lg} ${radius.lg} 0 0`,
           }}>
             <div style={{ width: 36 }} />
-            <div style={{ flex: 1, fontSize: font.xs, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Name</div>
-            <div style={{ minWidth: 100, fontSize: font.xs, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Schedule</div>
-            <div style={{ fontSize: font.xs, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Community</div>
+            <div style={{ flex: 1, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Name</div>
+            <div style={{ minWidth: 100, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</div>
+            <div style={{ fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Community</div>
           </div>
 
           <div style={{
@@ -1155,7 +1153,8 @@ function DashboardTab() {
   const [loading,   setLoading]   = useState(!cacheGet(VA_DASH_KEY));
   const [error,     setError]     = useState("");
   const [shiftTab,  setShiftTab]  = useState("morning");
-  const [community, setCommunity] = useState("all");   // NEW
+  const [community, setCommunity] = useState("all");
+  const [search,    setSearch]    = useState("");
 
   function fetchData() {
     cacheClear(VA_DASH_KEY);
@@ -1174,7 +1173,7 @@ function DashboardTab() {
     fetchData();
   }, []);
 
-  // ── Filtering ─────────────────────────────────────────────────
+  // ── Filtering helpers ─────────────────────────────────────────
   function matchCommunity(r) {
     if (community === "all")  return true;
     if (community === "cba")  return r.community === "CBA";
@@ -1182,17 +1181,23 @@ function DashboardTab() {
     return true;
   }
 
-  // Combine ALL rows (across all shifts) for stat totals, filtered by community
+  function matchSearch(r) {
+    if (!search) return true;
+    const q = search.toLowerCase();
+    return (r.va_name || "").toLowerCase().includes(q)
+        || (r.client  || "").toLowerCase().includes(q);
+  }
+
+  // Combined stats across all shifts (community filter applied, no search)
   const allRows = data
     ? [...(data.morning || []), ...(data.mid || []), ...(data.afternoon || [])]
     : [];
   const filteredAllRows = allRows.filter(matchCommunity);
 
-  // Rows shown in the table — filtered by both shift AND community
+  // Rows shown in table — filtered by shift + community + search
   const shiftRows = data ? (data[shiftTab] || []) : [];
-  const rows      = shiftRows.filter(matchCommunity);
+  const rows      = shiftRows.filter(matchCommunity).filter(matchSearch);
 
-  // Stats reflect the community filter (so "23 Clocked In" means 23 *in this community*)
   const stats = {
     total:       filteredAllRows.length,
     clocked_in:  filteredAllRows.filter(r => r.status === "Clocked In").length,
@@ -1229,12 +1234,9 @@ function DashboardTab() {
           </div>
         </div>
 
-        <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-          <CommunityFilter value={community} onChange={setCommunity} />
-          <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
-            {loading ? "Loading…" : "Refresh"}
-          </Button>
-        </div>
+        <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
+          {loading ? "Loading…" : "Refresh"}
+        </Button>
       </div>
 
       {/* Stat cards */}
@@ -1253,6 +1255,49 @@ function DashboardTab() {
       {/* Shift sub-tabs */}
       <ShiftTabBar tabs={SHIFT_TABS} active={shiftTab} onChange={setShiftTab} />
 
+      {/* ── Filter pills + search (matches Reports tab style) ─── */}
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
+        <FilterPill
+          label="All"
+          count={shiftRows.length}
+          active={community === "all"}
+          onClick={() => setCommunity("all")}
+          color={colors.teal}
+        />
+        <FilterPill
+          label="CBA"
+          count={shiftRows.filter(r => r.community === "CBA").length}
+          active={community === "cba"}
+          onClick={() => setCommunity("cba")}
+          color={colors.communityCBA}
+        />
+        <FilterPill
+          label="Agency"
+          count={shiftRows.filter(r => r.community === "Main").length}
+          active={community === "main"}
+          onClick={() => setCommunity("main")}
+          color={colors.communityMain}
+        />
+        <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+          <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+          <input
+            type="text"
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search name or client…"
+            style={{
+              paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+              border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+              fontSize: font.sm, fontFamily: font.family, outline: "none",
+              background: colors.surface, color: colors.textPrimary, width: 220,
+            }}
+            onFocus={e => e.target.style.borderColor = colors.teal}
+            onBlur={e  => e.target.style.borderColor = colors.border}
+          />
+        </div>
+      </div>
+
       {/* Table */}
       {loading ? (
         <div style={{ textAlign: "center", color: colors.textMuted, fontSize: font.sm, padding: "40px 0" }}>
@@ -1260,9 +1305,11 @@ function DashboardTab() {
         </div>
       ) : rows.length === 0 ? (
         <StatusBox variant="info">
-          {community === "all"
-            ? `No VAs scheduled for the ${SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.`
-            : `No ${community === "cba" ? "CBA" : "Agency"} VAs scheduled for this shift.`
+          {search
+            ? `No results matching "${search}".`
+            : community === "all"
+              ? `No VAs scheduled for the ${SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.`
+              : `No ${community === "cba" ? "CBA" : "Agency"} VAs scheduled for this shift.`
           }
         </StatusBox>
       ) : (
