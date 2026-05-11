@@ -9,7 +9,10 @@ from app.notion import (
     match_client_name,
     EST,
 )
-from app.services.matching import names_match, fuzzy_find_eod
+from app.services.matching import (
+    names_match, fuzzy_find_eod,
+    is_project_based_contract,
+)
 from app.middleware.security import validate_date, safe_error
 
 
@@ -141,6 +144,11 @@ def get_eow_report(
                 for cid in va.get("contract_ids", [])
                 if cid in contracts_by_id
             ]
+            non_pb_contracts = [c for c in active_contracts if not is_project_based_contract(c)]
+
+            # Skip any VA without active billable contracts
+            if not non_pb_contracts:
+                continue
 
             daily      = []
             va_all_eod = []
@@ -153,7 +161,6 @@ def get_eow_report(
                     a for a in att
                     if a["full_name"] == full_key or a["last_name"] == va_last
                 ]
-                clocked_in  = len(va_clockins) > 0
 
                 clock_notes = " ".join(
                     a.get("notes", "") for a in va_clockins
@@ -163,53 +170,36 @@ def get_eow_report(
                 eod_source = week_eod_main[d] if community == "Main" else week_eod_cba[d]
                 va_day_eod = _find_va_eod_for_day(eod_source, full_key)
 
-                if not active_contracts:
-                    # No contracts — single row per day
-                    va_all_eod.extend(va_day_eod)
+                # One entry per non-project-based contract per day
+                for con in non_pb_contracts:
+                    con_client = con["client_name"]
+
+                    # Per-contract EOD (fuzzy) — done first so eod_needs_v is defined
+                    con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
+                    reports = [con_eod] if con_eod else []
+                    va_all_eod.extend(reports)
+
+                    # Per-contract clock-in (fuzzy)
+                    contract_clocked_in = False
+                    needs_verification  = eod_needs_v  # start with EOD's verification flag
+                    for ci in va_clockins:
+                        is_match, needs_v = match_client_name(
+                            ci.get("client", ""), con_client
+                        )
+                        if is_match:
+                            contract_clocked_in = True
+                            needs_verification = needs_verification or needs_v
+                            break
+
                     daily.append({
-                        "date":          d,
-                        "clocked_in":    clocked_in,
-                        "eod_submitted": len(va_day_eod) > 0,
-                        "reports":       va_day_eod,
-                        "keyword_flags": list(set(detect_keyword_flags(clock_notes))),
-                        "client":        None,
+                        "date":               d,
+                        "clocked_in":         contract_clocked_in,
+                        "eod_submitted":      len(reports) > 0,
+                        "reports":            reports,
+                        "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
+                        "client":             con_client,
+                        "needs_verification": needs_verification,
                     })
-                else:
-                    # One entry per contract per day
-                    for con in active_contracts:
-                        con_client = con["client_name"]
-
-                        # Per-contract EOD (fuzzy) — done first so eod_needs_v is defined
-                        con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
-                        reports = [con_eod] if con_eod else []
-                        va_all_eod.extend(reports)
-
-                        # Per-contract clock-in (fuzzy)
-                        contract_clocked_in = False
-                        needs_verification  = eod_needs_v  # start with EOD's verification flag
-                        for ci in va_clockins:
-                            is_match, needs_v = match_client_name(
-                                ci.get("client", ""), con_client
-                            )
-                            if is_match:
-                                contract_clocked_in = True
-                                needs_verification = needs_verification or needs_v
-                                break
-
-                        # Per-contract EOD (fuzzy)
-                        con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
-                        reports = [con_eod] if con_eod else []
-                        va_all_eod.extend(reports)
-
-                        daily.append({
-                            "date":               d,
-                            "clocked_in":         contract_clocked_in,
-                            "eod_submitted":      len(reports) > 0,
-                            "reports":            reports,
-                            "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
-                            "client":             con_client,
-                            "needs_verification": needs_verification,
-                        })
 
             duplicates   = detect_duplicate_eod(va_all_eod)
             missing_days = [e for e in daily if not e["eod_submitted"]]
@@ -217,7 +207,7 @@ def get_eow_report(
             all_kw_flags = list({f for e in daily for f in e["keyword_flags"]})
             unique_days  = list({e["date"] for e in daily})
 
-            contract_slots = max(len(active_contracts), 1)
+            contract_slots = max(len(non_pb_contracts), 1)
 
             va_summaries.append({
                 "va":             va,
@@ -254,13 +244,13 @@ def get_eow_report(
         va_summaries.sort(key=lambda x: -x["stats"]["flag_count"])
 
         total_possible_eod      = sum(s["contract_slots"] * s["stats"]["total_days"] for s in va_summaries)
-        total_possible_clockins = len(vas) * len(workdays)
+        total_possible_clockins = len(va_summaries) * len(workdays)
 
         return {
             "start":        start,
             "end":          end,
             "workdays":     workdays,
-            "total_vas":    len(vas),
+            "total_vas":    len(va_summaries),  # ← reflects VAs with active billable contracts only
             "va_summaries": va_summaries,
             "flags":        all_flags,
             "totals": {

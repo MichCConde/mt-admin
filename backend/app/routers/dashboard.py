@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 from fastapi import APIRouter, HTTPException
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from app.notion import (
     get_active_vas_cached,
     get_all_active_contracts_by_va_id,
@@ -10,10 +12,35 @@ from app.notion import (
     match_client_name,
     to_est, EST,
 )
+from app.data.contracts import get_all_contracts
 from app.services.matching import names_match
 
 router = APIRouter()
 
+
+# ── Date helpers ──────────────────────────────────────────────────
+
+def _week_range(d: date) -> tuple[date, date]:
+    """Returns (Monday, Sunday) of the week containing d."""
+    monday = d - timedelta(days=d.weekday())
+    sunday = monday + timedelta(days=6)
+    return monday, sunday
+
+
+def _parse_date(s) -> date | None:
+    """Parse a Notion date string into a date object. Returns None if missing/invalid."""
+    if not s:
+        return None
+    try:
+        return datetime.fromisoformat(str(s).replace("Z", "+00:00")[:19]).date()
+    except (ValueError, AttributeError):
+        try:
+            return datetime.strptime(str(s)[:10], "%Y-%m-%d").date()
+        except (ValueError, AttributeError):
+            return None
+
+
+# ── Existing helpers (unchanged) ──────────────────────────────────
 
 def prev_workday(d: datetime, offset: int = 1) -> str:
     current = d
@@ -86,7 +113,6 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
     eod_main   = get_eod_main_for_date(date_str)
     eod_cba    = get_eod_cba_for_date(date_str)
 
-    # Build a quick lookup: lowercase name → VA record (for community info)
     va_lookup = {}
     for va in vas:
         k = va["name"].strip().lower()
@@ -95,9 +121,7 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
 
     feed = []
 
-    # Clock-ins
     for a in attendance:
-        # Resolve VA name for display
         va_rec = va_lookup.get(a["full_name"]) or va_lookup.get(a["last_name"])
         display_name = va_rec["name"] if va_rec else a["raw_name"].split(",")[0].strip()
         community = va_rec.get("community", "") if va_rec else ""
@@ -113,7 +137,6 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
             "sort_key":  est_dt.isoformat(),
         })
 
-    # EOD submissions (Main + CBA)
     for r in [*eod_main, *eod_cba]:
         va_key = r["name"].strip().lower()
         va_rec = va_lookup.get(va_key) or va_lookup.get(va_key.split()[-1])
@@ -131,20 +154,82 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
             "sort_key":  est_dt.isoformat(),
         })
 
-    # Sort newest first
     feed.sort(key=lambda x: x["sort_key"], reverse=True)
 
     return feed
 
 
+# ── Weekly activity computation ───────────────────────────────────
+
+def _compute_contract_metrics(all_contracts: list, today: date) -> dict:
+    """
+    Computes contract-related stats for the Dashboard.
+
+    Returns:
+      - paused_contracts:     total count of contracts with status=Paused (all-time)
+      - new_onboardings:      contracts with Start Date in [last_week_mon, today]
+      - upcoming_onboardings: contracts with status=Draft AND Start Date in (today, this_week_sun]
+      - total_paused:         contracts with status=Paused AND Paused Date in [this_week_mon, this_week_sun]
+      - total_ended:          contracts with status=Ended AND End Date in [this_week_mon, this_week_sun]
+    """
+    this_mon, this_sun = _week_range(today)
+    last_mon = this_mon - timedelta(days=7)
+
+    paused_total      = 0
+    new_onboardings   = 0
+    upcoming_onboard  = 0
+    total_paused_wk   = 0
+    total_ended_wk    = 0
+
+    for c in all_contracts:
+        status      = c.get("status")
+        start_date  = _parse_date(c.get("start_date"))
+        paused_date = _parse_date(c.get("paused_date"))
+        end_date    = _parse_date(c.get("end_date"))
+
+        # Top-row "Paused Contracts" (all-time)
+        if status == "Paused":
+            paused_total += 1
+
+        # New onboardings: Start Date in [last week Monday, today]
+        if start_date and last_mon <= start_date <= today:
+            new_onboardings += 1
+
+        # Upcoming onboardings: Draft AND Start Date is upcoming this week
+        if status == "Draft" and start_date and today < start_date <= this_sun:
+            upcoming_onboard += 1
+
+        # Recently paused this week
+        if status == "Paused" and paused_date and this_mon <= paused_date <= this_sun:
+            total_paused_wk += 1
+
+        # Recently ended this week
+        if status == "Ended" and end_date and this_mon <= end_date <= this_sun:
+            total_ended_wk += 1
+
+    return {
+        "paused_contracts": paused_total,
+        "weekly_activity": {
+            "new_onboardings":      new_onboardings,
+            "upcoming_onboardings": upcoming_onboard,
+            "total_paused":         total_paused_wk,
+            "total_ended":          total_ended_wk,
+        },
+    }
+
+
+# ── Route ─────────────────────────────────────────────────────────
+
 @router.get("")
 def get_dashboard():
     try:
-        now  = datetime.now(tz=EST)
-        vas  = get_active_vas_cached()
+        now   = datetime.now(tz=EST)
+        today = now.date()
+        vas   = get_active_vas_cached()
 
         contracts_by_va     = get_all_active_contracts_by_va_id()
         active_contract_ids = get_active_contract_id_set()
+        all_contracts       = get_all_contracts()
 
         main_vas = [v for v in vas if v.get("community") == "Main"]
         cba_vas  = [v for v in vas if v.get("community") == "CBA"]
@@ -153,6 +238,9 @@ def get_dashboard():
             v for v in cba_vas
             if not any(cid in active_contract_ids for cid in v.get("contract_ids", []))
         ]
+
+        # Contract-based metrics (paused total + weekly activity)
+        contract_metrics = _compute_contract_metrics(all_contracts, today)
 
         # Today's activity feed
         today_str = now.strftime("%Y-%m-%d")
@@ -170,13 +258,15 @@ def get_dashboard():
 
         return {
             "va_counts": {
-                "total":       len(vas),
-                "main":        len(main_vas),
-                "cba":         len(cba_vas),
-                "no_contract": len(no_contract_vas),
+                "total":            len(vas),
+                "main":             len(main_vas),
+                "cba":              len(cba_vas),
+                "no_contract":      len(no_contract_vas),
+                "paused_contracts": contract_metrics["paused_contracts"],
             },
-            "activity_feed": activity_feed,
-            "activity_date": today_str,
+            "weekly_activity": contract_metrics["weekly_activity"],
+            "activity_feed":   activity_feed,
+            "activity_date":   today_str,
             "missing": {
                 "date":          yesterday,
                 "count":         len(missing_yesterday),

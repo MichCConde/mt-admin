@@ -7,11 +7,19 @@ from app.notion import *
 def _build_contract(page: dict) -> dict:
     """Build the standard contract dict from a Notion page."""
     return {
-        "contract_id":   page["id"],
-        "client_name":   _get_contract_client(page),
-        "contract_name": get_prop(page, "Contract Name"),
-        "start_shift":   get_prop(page, "Shift Start"),   # Notion property: "Shift Start"
-        "end_shift":     get_prop(page, "Shift End"),     # Notion property: "Shift End"
+        "contract_id":          page["id"],
+        "client_name":          _get_contract_client(page),
+        "contract_name":        get_prop(page, "Contract Name"),
+        "start_shift":          get_prop(page, "Shift Start"),
+        "end_shift":            get_prop(page, "Shift End"),
+        "package":              get_prop(page, "Package"),
+        "is_project_based":     get_prop(page, "Package") == "Project-based",
+
+        # Fields used by /api/dashboard weekly metrics
+        "status":               get_prop(page, "Contract Status"),
+        "start_date":           get_prop(page, "Start Date"),
+        "paused_date":          get_prop(page, "Paused Date"),
+        "end_date":             get_prop(page, "End Date"),
     }
 
 
@@ -61,6 +69,21 @@ def get_active_contracts_for_va(contract_ids: list) -> list:
             continue
     return contracts
 
+
+def get_all_contracts() -> list:
+    """
+    Returns ALL contracts across every status.
+    Used by /api/dashboard for weekly activity metrics
+    (counts of Paused, Ended, Draft, etc.).
+    """
+    all_pages = []
+    for status in ["Active", "Paused", "Ended", "Draft"]:
+        pages = query_all(DB["contracts"], {
+            "property": "Contract Status",
+            "select":   {"equals": status},
+        })
+        all_pages.extend(pages)
+    return [_build_contract(page) for page in all_pages]
 
 # ── Helper: read Client property regardless of trailing space ─────
 

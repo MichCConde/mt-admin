@@ -27,25 +27,28 @@ import { cacheGet, cacheSet, cacheClearAll, CACHE_KEYS } from "../../utils/repor
 import { useInactivityTimeout } from "../../hooks/useInactivityTimeout";
 
 const NAV = [
-  { id: "dashboard",           icon: LayoutDashboard, label: "Dashboard",          sub: "Overview",            component: Dashboard },
-  { id: "virtual_assistants",  icon: ClipboardList,   label: "Virtual Assistants", sub: "EOD & Attendance",    component: VirtualAssistants },
-  { id: "schedule",            icon: CalendarDays,    label: "Schedule",           sub: "Shift overview",      component: Schedule },
-  { id: "eow_reports",         icon: FileSpreadsheet, label: "EOW Reports",        sub: "End-of-week reports", component: EowReports },
-  { id: "eom_reports",         icon: BarChart3,       label: "EOM Reports",        sub: "Monthly performance", component: EomReports },
-  { id: "activity_logs",       icon: ScrollText,      label: "Activity Logs",      sub: "Audit trail",         component: ActivityLogs },
-  { id: "staff_management",    icon: Users,           label: "Staff",              sub: "Manage accounts",     component: StaffDashboard },
+  { id: "dashboard",           icon: LayoutDashboard, label: "Dashboard",          component: Dashboard },
+  { id: "virtual_assistants",  icon: ClipboardList,   label: "Virtual Assistants", component: VirtualAssistants },
+  { id: "schedule",            icon: CalendarDays,    label: "Schedule",           component: Schedule },
+  { id: "eow_reports",         icon: FileSpreadsheet, label: "EOW Reports",        component: EowReports },
+  { id: "eom_reports",         icon: BarChart3,       label: "EOM Reports",        component: EomReports },
+  { id: "activity_logs",       icon: ScrollText,      label: "Activity Logs",      component: ActivityLogs },
+  { id: "staff_management",    icon: Users,           label: "Staff",              component: StaffDashboard },
 ];
 
 const NAV_SOON = [
   { icon: ShieldAlert, label: "Strike Tracker" },
 ];
 
-const SIDEBAR_EXPANDED = 220;
-const SIDEBAR_COLLAPSED = 64;
+const SIDEBAR_EXPANDED = 240;
+const SIDEBAR_COLLAPSED = 72;
+
+// Subtler corner radius — Tabela-style without being too rounded
+const ITEM_RADIUS = 6;
 
 export default function Layout({ user, staff }) {
   const role = staff?.role || "sme";
-  useInactivityTimeout(); 
+  useInactivityTimeout();
   const allowedNav = NAV.filter(item => canAccessPage(role, item.id));
 
   const [activeTab, setActiveTab] = useState("dashboard");
@@ -53,7 +56,6 @@ export default function Layout({ user, staff }) {
     try { return sessionStorage.getItem("sidebar_collapsed") === "true"; } catch { return false; }
   });
 
-  // Settings is a special page — not in NAV
   const isSettings = activeTab === "settings";
   const ActivePage = isSettings
     ? () => <Settings staff={staff} />
@@ -67,7 +69,6 @@ export default function Layout({ user, staff }) {
     try { sessionStorage.setItem("sidebar_collapsed", String(next)); } catch {}
   }
 
-  // If role changes and current tab is no longer allowed, redirect to dashboard
   useEffect(() => {
     if (activeTab !== "settings" && !canAccessPage(role, activeTab)) {
       setActiveTab("dashboard");
@@ -99,18 +100,27 @@ export default function Layout({ user, staff }) {
     return () => clearTimeout(t);
   }, [role]);
 
-  const btnBase = {
-    display: "flex", alignItems: "center",
-    width: "100%", borderRadius: radius.md,
-    border: `1px solid ${colors.navyBorder}`,
-    background: "transparent",
-    color: "#7A9BB8", fontSize: font.sm, fontWeight: 600,
-    cursor: "pointer", fontFamily: font.family,
-    transition: "background .12s, color .12s",
-  };
+  // Get user initials for avatar
+  const userInitials = (() => {
+    const name = staff?.name || user?.email || "?";
+    const parts = name.trim().split(/\s+/);
+    if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+    return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  })();
 
   return (
     <VAProfileProvider>
+      {/* Global fade-in keyframes */}
+      <style>{`
+        @keyframes mt-fade-in {
+          from { opacity: 0; transform: translateY(4px); }
+          to   { opacity: 1; transform: translateY(0); }
+        }
+        .mt-page-fade {
+          animation: mt-fade-in 0.22s ease-out;
+        }
+      `}</style>
+
       <div style={{ display: "flex", height: "100vh", overflow: "hidden", fontFamily: font.family, background: colors.bg }}>
 
         {/* ── Sidebar ──────────────────────────────────────────────── */}
@@ -129,29 +139,53 @@ export default function Layout({ user, staff }) {
           <div style={{
             display: "flex", flexDirection: "column", flex: 1,
             overflowY: "auto", overflowX: "hidden",
+            padding: collapsed ? "20px 12px" : "24px 16px",
           }}>
 
-            {/* Logo */}
+            {/* ── Logo lockup: icon + wordmark ────────────────────── */}
             <div style={{
-              padding: collapsed ? "20px 0 16px" : "20px 20px 16px",
-              borderBottom: `1px solid ${colors.navyBorder}`,
-              display: "flex", justifyContent: "center", alignItems: "center",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: collapsed ? "center" : "flex-start",
+              gap: collapsed ? 0 : 12,
+              padding: "0 6px",
+              marginBottom: 32,
+              minHeight: 36,
             }}>
-              <img
-                src="/mt-logo.png"
-                alt="Monster Task"
-                style={{
-                  width: collapsed ? 36 : 96,
-                  objectFit: "contain",
-                  transition: "width .2s ease",
-                }}
-              />
+              <div style={{
+                width: 32, height: 32,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                flexShrink: 0,
+              }}>
+                <img
+                  src="/mt-logo.png"
+                  alt="Monster Task"
+                  style={{
+                    maxWidth: "100%",
+                    maxHeight: "100%",
+                    objectFit: "contain",
+                    display: "block",
+                  }}
+                />
+              </div>
+              {!collapsed && (
+                <span style={{
+                  fontSize: 17,
+                  fontWeight: 800,
+                  color: "#fff",
+                  letterSpacing: "-0.01em",
+                  whiteSpace: "nowrap",
+                  lineHeight: 1,
+                }}>
+                  Monster Task
+                </span>
+              )}
             </div>
 
-            {/* Primary nav */}
-            <div style={{ flex: 1, padding: collapsed ? "12px 6px 0" : "12px 8px 0" }}>
-              {!collapsed && <NavGroupLabel>Menu</NavGroupLabel>}
-
+            {/* ── Primary nav ─────────────────────────────────────── */}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 3 }}>
               {allowedNav.map((item) => {
                 const active = activeTab === item.id;
                 const Icon   = item.icon;
@@ -161,38 +195,36 @@ export default function Layout({ user, staff }) {
                     onClick={() => setActiveTab(item.id)}
                     title={collapsed ? item.label : undefined}
                     style={{
-                      display: "flex", alignItems: "center",
+                      display: "flex",
+                      alignItems: "center",
                       justifyContent: collapsed ? "center" : "flex-start",
-                      gap: collapsed ? 0 : 10,
+                      gap: collapsed ? 0 : 12,
                       width: "100%",
-                      padding: collapsed ? "10px 0" : "9px 12px",
-                      borderRadius: radius.md, border: "none",
+                      padding: collapsed ? "10px 0" : "10px 14px",
+                      borderRadius: ITEM_RADIUS,
+                      border: "none",
                       background: active ? colors.navyLight : "transparent",
-                      cursor: "pointer", fontFamily: font.family,
-                      marginBottom: 2, transition: "background .12s",
-                      borderLeft: active ? `3px solid ${colors.teal}` : "3px solid transparent",
+                      cursor: "pointer",
+                      fontFamily: font.family,
+                      transition: "background .15s, color .15s",
+                      textAlign: "left",
                     }}
                     onMouseEnter={e => { if (!active) e.currentTarget.style.background = colors.navyLight; }}
                     onMouseLeave={e => { if (!active) e.currentTarget.style.background = "transparent"; }}
                   >
-                    <Icon size={16} strokeWidth={active ? 2.5 : 2} color={active ? colors.teal : "#7A9BB8"} />
+                    <Icon
+                      size={18}
+                      strokeWidth={active ? 2.25 : 2}
+                      color={active ? colors.teal : "#9FB3CC"}
+                    />
                     {!collapsed && (
-                      <>
-                        <div style={{ flex: 1, textAlign: "left" }}>
-                          <div style={{
-                            fontSize: font.base,
-                            fontWeight: active ? 700 : 500,
-                            color: active ? colors.white : "#C4D8EA",
-                            lineHeight: 1.2,
-                          }}>
-                            {item.label}
-                          </div>
-                          <div style={{ fontSize: font.xs, color: active ? "#7A9BB8" : "#506A84", marginTop: 1 }}>
-                            {item.sub}
-                          </div>
-                        </div>
-                        {active && <ChevronRight size={13} color={colors.teal} />}
-                      </>
+                      <span style={{
+                        fontSize: 14,
+                        fontWeight: active ? 600 : 500,
+                        color: active ? colors.teal : "#C4D8EA",
+                      }}>
+                        {item.label}
+                      </span>
                     )}
                   </button>
                 );
@@ -201,22 +233,40 @@ export default function Layout({ user, staff }) {
               {/* Coming soon — admin only */}
               {showComingSoon(role) && (
                 <>
-                  {!collapsed && <NavGroupLabel style={{ marginTop: 16 }}>Coming Soon</NavGroupLabel>}
+                  {!collapsed && (
+                    <div style={{
+                      fontSize: 10, fontWeight: 700,
+                      color: "#3A5472",
+                      letterSpacing: "0.1em",
+                      textTransform: "uppercase",
+                      padding: "20px 14px 8px",
+                    }}>
+                      Coming Soon
+                    </div>
+                  )}
                   {NAV_SOON.map((item) => {
                     const Icon = item.icon;
                     return (
-                      <div key={item.label} title={collapsed ? item.label : undefined} style={{
-                        display: "flex", alignItems: "center",
-                        justifyContent: collapsed ? "center" : "flex-start",
-                        gap: collapsed ? 0 : 10,
-                        padding: collapsed ? "9px 0" : "9px 12px",
-                        borderRadius: radius.md, cursor: "default",
-                        marginBottom: 2, borderLeft: "3px solid transparent",
-                      }}>
-                        <Icon size={16} color="#2C4460" />
+                      <div
+                        key={item.label}
+                        title={collapsed ? item.label : undefined}
+                        style={{
+                          display: "flex",
+                          alignItems: "center",
+                          justifyContent: collapsed ? "center" : "flex-start",
+                          gap: collapsed ? 0 : 12,
+                          padding: collapsed ? "10px 0" : "10px 14px",
+                          borderRadius: ITEM_RADIUS,
+                          cursor: "default",
+                          opacity: 0.5,
+                        }}
+                      >
+                        <Icon size={18} color="#506A84" />
                         {!collapsed && (
                           <>
-                            <span style={{ fontSize: font.base, color: "#2C4460", fontWeight: 500 }}>{item.label}</span>
+                            <span style={{ fontSize: 14, color: "#506A84", fontWeight: 500, flex: 1 }}>
+                              {item.label}
+                            </span>
                             <SoonBadge />
                           </>
                         )}
@@ -227,55 +277,45 @@ export default function Layout({ user, staff }) {
               )}
             </div>
 
-            {/* Sidebar footer */}
+            {/* ── Footer: Settings + Sign Out buttons ────────────── */}
             <div style={{
+              display: "flex", flexDirection: "column", gap: 3,
+              paddingTop: 16,
+              marginTop: 16,
               borderTop: `1px solid ${colors.navyBorder}`,
-              padding: collapsed ? "14px 6px 16px" : "14px 12px 16px",
-              display: "flex", flexDirection: "column", gap: 6,
             }}>
-              {!collapsed && (
-                <div style={{
-                  fontSize: font.xs, color: "#7A9BB8", fontWeight: 600,
-                  overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
-                  marginBottom: 4,
-                }}>
-                  {staff?.name || user?.email}
-                  <span style={{
-                    display: "inline-block", marginLeft: 6,
-                    fontSize: "9px", fontWeight: 800, color: colors.teal,
-                    background: colors.navyLight, borderRadius: 4,
-                    padding: "1px 6px", verticalAlign: "middle",
-                    textTransform: "uppercase", letterSpacing: "0.05em",
-                  }}>
-                    {getRoleLabel(role)}
-                  </span>
-                </div>
-              )}
-
-              {/* Settings */}
               <button
                 onClick={() => setActiveTab("settings")}
                 title={collapsed ? "Settings" : undefined}
                 style={{
-                  ...btnBase,
+                  display: "flex",
+                  alignItems: "center",
                   justifyContent: collapsed ? "center" : "flex-start",
-                  gap: collapsed ? 0 : 8,
-                  padding: collapsed ? "8px 0" : "8px 12px",
-                  borderColor: isSettings ? colors.teal : colors.navyBorder,
+                  gap: collapsed ? 0 : 12,
+                  width: "100%",
+                  padding: collapsed ? "10px 0" : "10px 14px",
+                  borderRadius: ITEM_RADIUS,
+                  border: "none",
                   background: isSettings ? colors.navyLight : "transparent",
-                  color: isSettings ? colors.teal : "#7A9BB8",
+                  cursor: "pointer", fontFamily: font.family,
+                  transition: "background .15s",
+                  textAlign: "left",
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = colors.navyLight; e.currentTarget.style.color = "#fff"; }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.background = isSettings ? colors.navyLight : "transparent";
-                  e.currentTarget.style.color = isSettings ? colors.teal : "#7A9BB8";
-                }}
+                onMouseEnter={e => { if (!isSettings) e.currentTarget.style.background = colors.navyLight; }}
+                onMouseLeave={e => { if (!isSettings) e.currentTarget.style.background = "transparent"; }}
               >
-                <SettingsIcon size={14} />
-                {!collapsed && "Settings"}
+                <SettingsIcon size={18} color={isSettings ? colors.teal : "#9FB3CC"} />
+                {!collapsed && (
+                  <span style={{
+                    fontSize: 14,
+                    fontWeight: isSettings ? 600 : 500,
+                    color: isSettings ? colors.teal : "#C4D8EA",
+                  }}>
+                    Settings
+                  </span>
+                )}
               </button>
 
-              {/* Sign out */}
               <button
                 onClick={async () => {
                   await logActivity(LOG_TYPES.SIGN_OUT, `${user?.email} signed out`);
@@ -284,25 +324,78 @@ export default function Layout({ user, staff }) {
                 }}
                 title={collapsed ? "Sign Out" : undefined}
                 style={{
-                  ...btnBase,
+                  display: "flex",
+                  alignItems: "center",
                   justifyContent: collapsed ? "center" : "flex-start",
-                  gap: collapsed ? 0 : 8,
-                  padding: collapsed ? "8px 0" : "8px 12px",
+                  gap: collapsed ? 0 : 12,
+                  width: "100%",
+                  padding: collapsed ? "10px 0" : "10px 14px",
+                  borderRadius: ITEM_RADIUS,
+                  border: "none",
+                  background: "transparent",
+                  cursor: "pointer", fontFamily: font.family,
+                  transition: "background .15s",
+                  textAlign: "left",
                 }}
-                onMouseEnter={e => { e.currentTarget.style.background = colors.navyLight; e.currentTarget.style.color = "#fff"; }}
-                onMouseLeave={e => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "#7A9BB8"; }}
+                onMouseEnter={e => e.currentTarget.style.background = colors.navyLight}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}
               >
-                <LogOut size={14} />
-                {!collapsed && "Sign Out"}
+                <LogOut size={18} color="#9FB3CC" />
+                {!collapsed && (
+                  <span style={{ fontSize: 14, fontWeight: 500, color: "#C4D8EA" }}>
+                    Log Out
+                  </span>
+                )}
               </button>
 
-              {!collapsed && (
-                <div style={{ fontSize: font.xs, color: "#3A5472", marginTop: 2 }}>
-                  MT Admin — v2.0
+              {/* User profile card */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: collapsed ? 0 : 10,
+                justifyContent: collapsed ? "center" : "flex-start",
+                padding: collapsed ? "12px 0 4px" : "16px 6px 4px",
+                marginTop: 8,
+                borderTop: `1px solid ${colors.navyBorder}`,
+              }}>
+                <div style={{
+                  width: 36, height: 36,
+                  borderRadius: "50%",
+                  background: colors.teal,
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center", justifyContent: "center",
+                  fontSize: 12,
+                  fontWeight: 800,
+                  flexShrink: 0,
+                  letterSpacing: "0.02em",
+                }}>
+                  {userInitials}
                 </div>
-              )}
+                {!collapsed && (
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{
+                      fontSize: 13,
+                      fontWeight: 700,
+                      color: "#fff",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}>
+                      {staff?.name || user?.email?.split("@")[0] || "User"}
+                    </div>
+                    <div style={{
+                      fontSize: 11,
+                      color: "#7A9BB8",
+                      fontWeight: 500,
+                      marginTop: 1,
+                    }}>
+                      {getRoleLabel(role)}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-
           </div>
 
           {/* Floating collapse toggle */}
@@ -310,7 +403,7 @@ export default function Layout({ user, staff }) {
             onClick={toggleSidebar}
             title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
             style={{
-              position: "absolute", bottom: 60, right: -14,
+              position: "absolute", bottom: 84, right: -14,
               width: 28, height: 28, borderRadius: "50%",
               background: colors.teal, border: `2px solid ${colors.navy}`,
               display: "flex", alignItems: "center", justifyContent: "center",
@@ -334,38 +427,33 @@ export default function Layout({ user, staff }) {
 
           {/* Top bar */}
           <header style={{
+            position: "relative",   // ← add this
             background: colors.surface,
             borderBottom: `1px solid ${colors.border}`,
             padding: "0 32px", height: 52,
-            display: "flex", alignItems: "center", justifyContent: "flex-end",
+            display: "flex", alignItems: "center", justifyContent: "space-between", gap: 16,
             flexShrink: 0,
           }}>
-            <span style={{ fontSize: font.sm, color: colors.textMuted, fontWeight: 500 }}>
+            {/* Slot for page-injected content (cached banners, status, etc.) */}
+            <div
+              id="mt-top-bar-slot"
+              style={{ flex: 1, display: "flex", alignItems: "center", minWidth: 0 }}
+            />
+            <span style={{ fontSize: font.sm, color: colors.textMuted, fontWeight: 500, flexShrink: 0 }}>
               {new Date().toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric", year: "numeric" })}
             </span>
           </header>
 
-          {/* Page content */}
+          {/* Page content — keyed by activeTab so it re-mounts and replays the fade animation */}
           <main style={{ flex: 1, overflowY: "auto", padding: "32px 40px", width: "100%", boxSizing: "border-box" }}>
-            <ErrorBoundary level="page" pageName={isSettings ? "Settings" : (allowedNav.find(n => n.id === activeTab)?.label)}>
-              <ActivePage setActiveTab={setActiveTab} />
-            </ErrorBoundary>
+            <div key={activeTab} className="mt-page-fade">
+              <ErrorBoundary level="page" pageName={isSettings ? "Settings" : (allowedNav.find(n => n.id === activeTab)?.label)}>
+                <ActivePage setActiveTab={setActiveTab} />
+              </ErrorBoundary>
+            </div>
           </main>
         </div>
       </div>
     </VAProfileProvider>
-  );
-}
-
-function NavGroupLabel({ children, style: extra }) {
-  return (
-    <div style={{
-      fontSize: font.xs, fontWeight: 700, color: "#3A5472",
-      letterSpacing: "0.08em", textTransform: "uppercase",
-      padding: "8px 12px 6px", userSelect: "none",
-      ...extra,
-    }}>
-      {children}
-    </div>
   );
 }

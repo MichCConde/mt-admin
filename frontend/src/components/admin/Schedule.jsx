@@ -1,5 +1,5 @@
 import { useState, useEffect }   from "react";
-import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, RefreshCw, Download } from "lucide-react";
+import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, Download } from "lucide-react";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
@@ -9,6 +9,9 @@ import { Select }                              from "../ui/Inputs";
 import { Avatar, CommunityBadge, StatusBox }   from "../ui/Indicators";
 import { ths, tds, tableWrap }          from "../ui/Tables";
 import { VANameLink } from "../../contexts/VAProfileContext";
+import TopBarCachedBanner from "../ui/TopBarCachedBanner";
+import TopBarProgress from "../ui/TopBarProgress";
+import { Skeleton } from "../ui/Skeleton";
 
 const DAYS     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
@@ -45,25 +48,6 @@ const STATUS_CONFIG = {
   off:         { color: colors.textFaint, bg: colors.surfaceAlt,   border: colors.border,        Icon: MinusCircle,  label: "Day off"          },
   no_data:     { color: colors.textFaint, bg: colors.surfaceAlt,   border: colors.border,        Icon: MinusCircle,  label: "No shift data"    },
 };
-
-function CachedBanner({ cacheKey, onRefresh, loading }) {
-  const mins = cacheTimeLeft(cacheKey);
-  if (!mins) return null;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
-      borderRadius: radius.md, padding: "8px 14px", marginBottom: 4,
-    }}>
-      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
-        Showing cached data · expires in {mins} min
-      </span>
-      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
-        Refresh
-      </Button>
-    </div>
-  );
-}
 
 async function downloadAvailability(apiFetchFn, setDownloading) {
   setDownloading(true);
@@ -125,6 +109,68 @@ async function downloadAvailability(apiFetchFn, setDownloading) {
   }
 }
 
+// ── Schedule table skeleton ───────────────────────────────────────
+function ScheduleTableSkeleton() {
+  return (
+    <>
+      {/* Legend skeleton */}
+      <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap", marginTop: 16, marginBottom: 24 }}>
+        {[1, 2, 3].map(i => (
+          <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Skeleton width={12} height={12} radius={3} />
+            <Skeleton width={90} height={11} />
+          </div>
+        ))}
+      </div>
+
+      {/* Table skeleton — real header (static labels) + shimmer body rows */}
+      <Card noPadding style={{ overflowX: "auto" }}>
+        <table style={{ ...tableWrap, minWidth: 700 }}>
+          <thead>
+            <tr style={{ background: colors.navy }}>
+              <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>
+                VA
+              </th>
+              {DAYS.map((d) => (
+                <th key={d} style={{
+                  ...ths,
+                  background: (d === "Sat" || d === "Sun") ? "#0A1525" : colors.navy,
+                  borderLeft: `1px solid ${colors.navyBorder}`,
+                }}>
+                  {d}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {Array.from({ length: 8 }).map((_, ri) => (
+              <tr key={ri}>
+                <td style={{
+                  ...tds, paddingLeft: 20,
+                  background: ri % 2 === 0 ? colors.surface : colors.surfaceAlt,
+                  borderRight: `1px solid ${colors.border}`,
+                }}>
+                  <Skeleton width={130} height={14} />
+                </td>
+                {DAYS.map((d) => (
+                  <td key={d} style={{
+                    ...tds,
+                    background: ri % 2 === 0 ? colors.surface : colors.surfaceAlt,
+                    borderLeft: `1px solid ${colors.border}`,
+                    padding: 6,
+                  }}>
+                    <Skeleton width="80%" height={22} radius={4} />
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
+    </>
+  );
+}
+
 // ── Root ──────────────────────────────────────────────────────────
 const CACHE_KEY = CACHE_KEYS.SCHEDULE;
 
@@ -136,7 +182,7 @@ export default function Schedule() {
   const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
-    if (cacheGet(CACHE_KEY)) return;   // already cached — skip fetch
+    if (cacheGet(CACHE_KEY)) return;
     apiFetch("/api/schedule")
       .then(d => { const list = d.vas ?? []; cacheSet(CACHE_KEY, list); setVAs(list); })
       .catch(e => setError(e.message))
@@ -162,26 +208,25 @@ export default function Schedule() {
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
       <PageHeader title="Schedule" subtitle="View VA shift times across the week. All times are in EST." />
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-          <Button
-            icon={Download}
-            variant="ghost"
-            onClick={() => downloadAvailability(apiFetch, setDownloading)}
-            disabled={downloading}
-            size="sm"
-          >
-            {downloading ? "Downloading…" : "Download Availability CSV"}
-          </Button>
-        </div>
+
+      <TopBarProgress active={loading} />
+      <TopBarCachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />
+
+      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+        <Button
+          icon={Download}
+          variant="ghost"
+          onClick={() => downloadAvailability(apiFetch, setDownloading)}
+          disabled={downloading}
+          size="sm"
+        >
+          {downloading ? "Downloading…" : "Download Availability CSV"}
+        </Button>
+      </div>
+
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
-      <CachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />
-
-      {loading && (
-        <div style={{ color: colors.textMuted, fontSize: font.base, padding: "40px 0", textAlign: "center" }}>
-          Loading schedule data…
-        </div>
-      )}
+      {loading && <ScheduleTableSkeleton />}
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
       {!loading && !error && (
@@ -260,7 +305,6 @@ function CommunityTab({ vas, community }) {
                     const works     = va.schedule_days?.includes(day);
                     const isWeekend = day === "Sat" || day === "Sun";
 
-                    // Flexible VA — show a note on working days
                     if (va.is_flexible && !isWeekend) {
                       return (
                         <td key={day} style={{
@@ -272,7 +316,6 @@ function CommunityTab({ vas, community }) {
                       );
                     }
 
-                    // Day off
                     if (!works) {
                       return (
                         <td key={day} style={{
@@ -285,7 +328,6 @@ function CommunityTab({ vas, community }) {
                       );
                     }
 
-                    // Working day — show ALL shift blocks (each client for CBA)
                     return (
                       <td key={day} style={{
                         ...tds,
@@ -507,8 +549,8 @@ function classifyVA(va, day, startH, startM, endH, endM) {
 }
 
 function AvailabilityFinder({ vas }) {
-  const [startIdx, setStartIdx] = useState(6);   // default 9:00 AM
-  const [endIdx,   setEndIdx]   = useState(8);   // default 10:00 AM
+  const [startIdx, setStartIdx] = useState(6);
+  const [endIdx,   setEndIdx]   = useState(8);
   const [day,      setDay]      = useState("Mon");
   const [results,  setResults]  = useState(null);
 
@@ -533,12 +575,10 @@ function AvailabilityFinder({ vas }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Info banner */}
       <StatusBox variant="info">
         Find CBA VAs available for a specific time window — useful when onboarding a new client.
       </StatusBox>
 
-      {/* Controls */}
       <ControlBar>
         <Select
           label="Day"
@@ -573,7 +613,6 @@ function AvailabilityFinder({ vas }) {
 
       {results && (
         <>
-          {/* Summary pills */}
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <SummaryPill count={available.length} label="Available"   color={colors.success} bg={colors.successLight} />
             <SummaryPill count={partial.length}   label="Partial"     color={colors.warning} bg={colors.warningLight} />

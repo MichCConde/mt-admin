@@ -13,6 +13,9 @@ import Button                                   from "../ui/Button";
 import { logActivity, LOG_TYPES }               from "../../utils/logger";
 import FilterPill from "../ui/FilterPill";
 import { useVAProfile, VANameLink } from "../../contexts/VAProfileContext";
+import TopBarCachedBanner from "../ui/TopBarCachedBanner";
+import TopBarProgress from "../ui/TopBarProgress";
+import { Skeleton, TableRowSkeleton } from "../ui/Skeleton";
 
 const CACHE_KEY = CACHE_KEYS.VA_LIST;
 
@@ -74,33 +77,13 @@ function VAListRow({ va, i }) {
   );
 }
 
-// ── Cached data banner ────────────────────────────────────────────
-function CachedBanner({ cacheKey, onRefresh, loading }) {
-  const mins = cacheTimeLeft(cacheKey);
-  if (!mins) return null;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
-      borderRadius: radius.md, padding: "8px 14px", marginBottom: 16,
-    }}>
-      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
-        Showing cached data · expires in {mins} min
-      </span>
-      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
-        Refresh
-      </Button>
-    </div>
-  );
-}
-
 // ── EOD Reports Tab ───────────────────────────────────────────────
 function EODTab() {
   const [date,       setDate]       = useState(todayISO());
   const [data,       setData]       = useState(null);
   const [loading,    setLoading]    = useState(false);
   const [error,      setError]      = useState("");
-  const [emailState, setEmailState] = useState("idle"); // idle | sending | sent | error
+  const [emailState, setEmailState] = useState("idle");
 
   async function run() {
     setLoading(true); setError(""); setData(null); setEmailState("idle");
@@ -127,6 +110,8 @@ function EODTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <TopBarProgress active={loading} />
+
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
@@ -262,7 +247,6 @@ function AttendanceTab() {
     const asterisk = c.needs_verification
       ? <span title="Client name needs manual verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
       : null;
-    // Only link when we have a real VA name (not a raw/unmatched attendance entry)
     return (
       <>
         {c.va_name ? <VANameLink name={c.va_name} /> : name}
@@ -273,6 +257,8 @@ function AttendanceTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <TopBarProgress active={loading} />
+
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
           <div>
@@ -296,7 +282,6 @@ function AttendanceTab() {
             <StatCard icon={UserX}     label="No Record"      value={noRecord.length}    highlight={noRecord.length > 0 ? "danger" : "success"} />
           </StatRow>
 
-          {/* Verification warning pill */}
           {verifyCount > 0 && (
             <div style={{
               display: "flex", alignItems: "center", gap: 8,
@@ -419,25 +404,6 @@ function StatusCell({ status, minutesLate, minutesEarly }) {
   return <span style={{ color: colors.success, fontWeight: 600 }}>On-time</span>;
 }
 
-// ── Cached banner for Reports ─────────────────────────────────────
-function ReportCachedBanner({ onRefresh, loading }) {
-  const mins = cacheTimeLeft(CACHE_KEYS.REPORT);
-  if (!mins) return null;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
-      borderRadius: radius.md, padding: "8px 14px",
-    }}>
-      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
-        Showing cached data · expires in {mins} min
-      </span>
-      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
-        Refresh
-      </Button>
-    </div>
-  );
-}
 
 // ── Reports Tab ───────────────────────────────────────────────────
 function ReportsTab() {
@@ -513,6 +479,8 @@ function ReportsTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <TopBarProgress active={loading} />
+      <TopBarCachedBanner cacheKey={CACHE_KEYS.REPORT} onRefresh={refresh} loading={loading} />
 
       {/* ── Controls ──────────────────────────────────────────── */}
       <Card>
@@ -555,10 +523,53 @@ function ReportsTab() {
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
+      {/* Loading skeleton when fetching with no prior data */}
+      {loading && !data && (
+        <>
+          <StatRow>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} style={{
+                flex: 1, minWidth: 130,
+                background: colors.surface,
+                border: `1px solid ${colors.border}`,
+                borderRadius: radius.lg,
+                padding: "16px 18px",
+                display: "flex", alignItems: "center", gap: 14,
+              }}>
+                <Skeleton width={40} height={40} radius={8} />
+                <div style={{ flex: 1 }}>
+                  <Skeleton width={36} height={22} />
+                  <Skeleton width={80} height={10} style={{ marginTop: 6 }} />
+                </div>
+              </div>
+            ))}
+          </StatRow>
+
+          <Card noPadding style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
+              <thead>
+                <tr style={{ background: colors.surfaceAlt }}>
+                  {["Name", "Client", "Community", "Clock In", "Punctuality", "Clock Out", "Submission"].map(h => (
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <TableRowSkeleton
+                    key={i}
+                    rowBg={i % 2 === 0 ? colors.surface : colors.surfaceAlt}
+                    cellWidths={["70%", "60%", "40%", "50%", "55%", "50%", "55%"]}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </Card>
+        </>
+      )}
+
       {data && (
         <>
-          <ReportCachedBanner onRefresh={refresh} loading={loading} />
-
           {/* ── Stat cards ────────────────────────────────────── */}
           <StatRow>
             <StatCard icon={Users}     label="Active VAs"       value={stats.active_vas ?? 0} />
@@ -707,7 +718,9 @@ export default function VirtualAssistants() {
         subtitle="Directory of all active VAs with EOD report history and profile details."
       />
 
-      {!isReportTab && <CachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />}
+      {/* Progress bar shows whenever directory data is fetching */}
+      {!isReportTab && <TopBarProgress active={loading} />}
+      {!isReportTab && <TopBarCachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />}
 
       {/* Summary pills — only show on directory tabs */}
       {!isReportTab && (
@@ -739,7 +752,6 @@ export default function VirtualAssistants() {
       {/* Directory tabs */}
       {!isReportTab && (
         <>
-          {/* Table header — navy style to match Reports/Dashboard */}
           <div style={{
             display: "flex", alignItems: "center", gap: 14,
             padding: "10px 20px",
@@ -757,12 +769,27 @@ export default function VirtualAssistants() {
             borderRadius: `0 0 ${radius.lg} ${radius.lg}`,
             overflow: "hidden", boxShadow: shadow.card,
           }}>
-            {loading && <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textMuted, fontSize: font.sm }}>Loading VAs…</div>}
+            {loading && Array.from({ length: 8 }).map((_, i) => (
+              <div key={i} style={{
+                display: "flex", alignItems: "center", gap: 14,
+                padding: "12px 20px",
+                background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
+                borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
+              }}>
+                <Skeleton width={36} height={36} radius={18} />
+                <div style={{ flex: 1 }}>
+                  <Skeleton width="40%" height={14} />
+                  <Skeleton width="55%" height={10} style={{ marginTop: 6 }} />
+                </div>
+                <Skeleton width={100} height={12} />
+                <Skeleton width={50} height={20} radius={4} />
+              </div>
+            ))}
             {error && <StatusBox variant="danger" style={{ margin: 16 }}>{error}</StatusBox>}
             {!loading && filtered.length === 0 && (
               <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>No VAs found.</div>
             )}
-            {filtered.map((va, i) => (
+            {!loading && filtered.map((va, i) => (
               <VAListRow key={va.id || i} va={va} i={i} />
             ))}
           </div>
@@ -861,7 +888,6 @@ function DashboardTab() {
     fetchData();
   }, []);
 
-  // ── Filtering helpers ─────────────────────────────────────────
   function matchCommunity(r) {
     if (community === "all")  return true;
     if (community === "cba")  return r.community === "CBA";
@@ -876,13 +902,11 @@ function DashboardTab() {
         || (r.client  || "").toLowerCase().includes(q);
   }
 
-  // Combined stats across all shifts (community filter applied, no search)
   const allRows = data
     ? [...(data.morning || []), ...(data.mid || []), ...(data.afternoon || [])]
     : [];
   const filteredAllRows = allRows.filter(matchCommunity);
 
-  // Rows shown in table — filtered by shift + community + search
   const shiftRows = data ? (data[shiftTab] || []) : [];
   const rows      = shiftRows.filter(matchCommunity).filter(matchSearch);
 
@@ -906,6 +930,9 @@ function DashboardTab() {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
+      <TopBarProgress active={loading} />
+      <TopBarCachedBanner cacheKey={VA_DASH_KEY} onRefresh={fetchData} loading={loading} />
+
       {/* Header row */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
         <div>
@@ -927,8 +954,27 @@ function DashboardTab() {
         </Button>
       </div>
 
-      {/* Stat cards */}
-      {data && (
+      {/* Stat cards — skeletons while loading without prior data */}
+      {loading && !data ? (
+        <StatRow>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} style={{
+              flex: 1, minWidth: 130,
+              background: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: radius.lg,
+              padding: "16px 18px",
+              display: "flex", alignItems: "center", gap: 14,
+            }}>
+              <Skeleton width={40} height={40} radius={8} />
+              <div style={{ flex: 1 }}>
+                <Skeleton width={36} height={22} />
+                <Skeleton width={80} height={10} style={{ marginTop: 6 }} />
+              </div>
+            </div>
+          ))}
+        </StatRow>
+      ) : data ? (
         <StatRow>
           <StatCard icon={Users}     label="Working Today" value={stats.total} />
           <StatCard icon={Clock}     label="Clocked In"    value={stats.clocked_in}  highlight="teal" />
@@ -936,14 +982,14 @@ function DashboardTab() {
           <StatCard icon={UserX}     label="Absent"        value={stats.absent}
             highlight={stats.absent > 0 ? "danger" : "success"} />
         </StatRow>
-      )}
+      ) : null}
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
       {/* Shift sub-tabs */}
       <ShiftTabBar tabs={SHIFT_TABS} active={shiftTab} onChange={setShiftTab} />
 
-      {/* ── Filter pills + search (matches Reports tab style) ─── */}
+      {/* ── Filter pills + search ─── */}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
         <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
         <FilterPill
@@ -986,11 +1032,30 @@ function DashboardTab() {
         </div>
       </div>
 
-      {/* Table */}
-      {loading ? (
-        <div style={{ textAlign: "center", color: colors.textMuted, fontSize: font.sm, padding: "40px 0" }}>
-          Loading shift data…
-        </div>
+      {/* Table — skeleton while loading without prior data */}
+      {loading && !data ? (
+        <Card noPadding>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <thead>
+                <tr style={{ background: colors.navy }}>
+                  {["Name", "Client", "Shift Time", "Clock In EST", "Punctuality", "Status", "Clock Out EST", "Submission"].map(h => (
+                    <th key={h} style={th}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <TableRowSkeleton
+                    key={i}
+                    rowBg={i % 2 === 0 ? colors.surface : colors.surfaceAlt}
+                    cellWidths={["60%", "60%", "55%", "55%", "55%", "50%", "55%", "55%"]}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Card>
       ) : rows.length === 0 ? (
         <StatusBox variant="info">
           {search

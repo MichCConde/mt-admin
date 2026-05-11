@@ -6,7 +6,10 @@ from app.notion import (
     get_all_active_contracts_by_va_id, va_works_on_date,
     match_client_name, get_active_contracts_by_id, EST,
 )
-from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clockin
+from app.services.matching import (
+    names_match, fuzzy_find_eod, fuzzy_find_clockin,
+    is_project_based_contract,
+)
 from app.services.report import build_report_row
 from app.services.shift import contract_shift_block, va_shift_block, format_shift_time
 from app.middleware.security import validate_date, safe_error
@@ -51,6 +54,14 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
             clocked_in  = len(va_clockins) > 0
             community   = va.get("community", "")
 
+            # Resolve active billable (non-project-based) contracts for this VA
+            contracts = contracts_by_va.get(va["id"], [])
+            non_pb_contracts = [c for c in contracts if not is_project_based_contract(c)]
+
+            # Skip any VA (Main or CBA) without active billable contracts
+            if not non_pb_contracts:
+                continue
+
             if community == "Main":
                 reports = main_idx.get(key, [])
                 if reports:
@@ -65,22 +76,7 @@ def check_eod(date: str = Query(..., description="YYYY-MM-DD")):
                     })
 
             elif community == "CBA":
-                contracts = contracts_by_va.get(va["id"], [])
-                if not contracts:
-                    reports = [r for r in eod_cba if r["name"].lower() == key]
-                    if reports:
-                        submitted_all.extend(reports)
-                    else:
-                        missing.append({
-                            **va, "clocked_in": clocked_in,
-                            "missing_type":   "clock_in_only" if not clocked_in else "eod_only",
-                            "missing_reason": (
-                                "No clock-in and no EOD report" if not clocked_in
-                                else "Clocked in but no EOD report submitted"),
-                        })
-                    continue
-
-                for contract in contracts:
+                for contract in non_pb_contracts:
                     client_key = contract["client_name"].lower()
                     reports    = cba_idx.get((key, client_key), [])
 
@@ -173,22 +169,20 @@ def get_combined_report(date: str = Query(..., description="YYYY-MM-DD")):
                 for cid in va.get("contract_ids", [])
                 if cid in contracts_by_id
             ]
+            non_pb_contracts = [c for c in active_contracts if not is_project_based_contract(c)]
 
-            if not active_contracts:
-                ci  = va_cis[0] if va_cis else None
-                eod = va_eod_list[0] if va_eod_list else None
+            # Skip any VA without active billable contracts
+            if not non_pb_contracts:
+                continue
+
+            for con in non_pb_contracts:
+                con_client = con["client_name"]
+                con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
+                con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
                 rows.append(build_report_row(
-                    va, None, comm, ci, eod, False, contract=None
+                    va, con_client, comm, con_ci, con_eod,
+                    ci_nv or eod_nv, contract=con
                 ))
-            else:
-                for con in active_contracts:
-                    con_client = con["client_name"]
-                    con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
-                    con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
-                    rows.append(build_report_row(
-                        va, con_client, comm, con_ci, con_eod,
-                        ci_nv or eod_nv, contract=con
-                    ))
 
         clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
 
@@ -214,6 +208,7 @@ def get_va_dashboard():
     """
     Real-time shift dashboard for today.
     Shift time: prefer contract's Start Shift, fall back to VA's Start Shift.
+    Only includes VAs with at least one active billable (non-project-based) contract.
     """
     try:
         now  = datetime.now(tz=EST)
@@ -262,27 +257,25 @@ def get_va_dashboard():
                 for cid in va.get("contract_ids", [])
                 if cid in contracts_by_id
             ]
+            non_pb_contracts = [c for c in active_contracts if not is_project_based_contract(c)]
 
-            if not active_contracts:
-                # Main VAs (and CBAs with no contracts) — use VA's own Shift Start
-                block = va_shift_block(va)
-                ci  = va_cis[0] if va_cis else None
-                eod = va_eod_list[0] if va_eod_list else None
-                rows.append(_build_dashboard_row(va, None, comm, block, ci, eod, now))
-            else:
-                for con in active_contracts:
-                    con_client = con["client_name"]
-                    block = contract_shift_block(con, label=con_client)
-                    # Fallback to VA-level shift if contract has no Shift Start
-                    if not block:
-                        block = va_shift_block(va)
+            # Skip any VA without active billable contracts
+            if not non_pb_contracts:
+                continue
 
-                    con_ci, _  = fuzzy_find_clockin(va_cis, con_client)
-                    con_eod, _ = fuzzy_find_eod(va_eod_list, con_client)
+            for con in non_pb_contracts:
+                con_client = con["client_name"]
+                block = contract_shift_block(con, label=con_client)
+                # Fallback to VA-level shift if contract has no Shift Start
+                if not block:
+                    block = va_shift_block(va)
 
-                    rows.append(_build_dashboard_row(
-                        va, con_client, comm, block, con_ci, con_eod, now
-                    ))
+                con_ci, _  = fuzzy_find_clockin(va_cis, con_client)
+                con_eod, _ = fuzzy_find_eod(va_eod_list, con_client)
+
+                rows.append(_build_dashboard_row(
+                    va, con_client, comm, block, con_ci, con_eod, now
+                ))
 
         # Bucket by shift period — matches frontend SHIFT_TABS display ranges
         morning, mid, afternoon = [], [], []

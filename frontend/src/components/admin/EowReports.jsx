@@ -4,7 +4,7 @@ import { Search, ChevronDown, ChevronUp,
          Copy, Users, RefreshCw, AlertTriangle } from "lucide-react";
 import { colors, font, radius, shadow }      from "../../styles/tokens";
 import { apiFetch }                          from "../../api";
-import { cacheSet, cacheGet, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
+import { cacheSet, cacheGet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import Button                                from "../ui/Button";
 import { Card, PageHeader, StatRow, TabBar } from "../ui/Structure";
 import { StatCard, StatusBadge, CommunityBadge, StatusBox, Avatar } from "../ui/Indicators";
@@ -12,6 +12,9 @@ import { Select }                            from "../ui/Inputs";
 import { logActivity, LOG_TYPES }            from "../../utils/logger";
 import FilterPill from "../ui/FilterPill";
 import { VANameLink } from "../../contexts/VAProfileContext";
+import TopBarCachedBanner from "../ui/TopBarCachedBanner";
+import TopBarProgress from "../ui/TopBarProgress";
+import { Skeleton } from "../ui/Skeleton";
 
 const CACHE_ALL = CACHE_KEYS.EOW_ALL;
 const CACHE_VA  = CACHE_KEYS.EOW_VA;
@@ -68,6 +71,45 @@ function FractionStatCard({ icon: Icon, label, value, total, highlight }) {
         </div>
         <div style={{ fontSize: font.sm, color: colors.textBody, fontWeight: 600, marginTop: 5 }}>{label}</div>
       </div>
+    </div>
+  );
+}
+
+// ── Stat card skeleton (matches the layout of StatCard/FractionStatCard) ─
+function StatCardSkeleton() {
+  return (
+    <div style={{
+      flex: 1, minWidth: 130, background: colors.surface,
+      border: `1px solid ${colors.border}`, borderRadius: radius.lg,
+      padding: "18px 20px", boxShadow: shadow.card,
+      display: "flex", alignItems: "flex-start", gap: 14,
+    }}>
+      <Skeleton width={40} height={40} radius={radius.md} />
+      <div style={{ flex: 1 }}>
+        <Skeleton width={50} height={26} />
+        <Skeleton width={100} height={12} style={{ marginTop: 8 }} />
+      </div>
+    </div>
+  );
+}
+
+// ── VA Row skeleton ───────────────────────────────────────────────
+function VARowSkeleton() {
+  return (
+    <div style={{
+      border: `1px solid ${colors.border}`,
+      borderRadius: radius.lg,
+      boxShadow: shadow.card,
+      padding: "13px 20px",
+      display: "flex", alignItems: "center", gap: 12,
+      background: colors.surfaceAlt,
+    }}>
+      <Skeleton width={40} height={20} radius={4} />
+      <Skeleton width="30%" height={14} />
+      <div style={{ flex: 1 }} />
+      <Skeleton width={70} height={20} radius={4} />
+      <Skeleton width={70} height={20} radius={4} />
+      <Skeleton width={15} height={15} radius={4} />
     </div>
   );
 }
@@ -221,25 +263,6 @@ function VARow({ summary, workdays }) {
   );
 }
 
-// ── CachedBanner ─────────────────────────────────────────────────
-function CachedBanner({ cacheKey, onRefresh, loading }) {
-  const mins = cacheTimeLeft(cacheKey);
-  if (!mins) return null;
-  return (
-    <div style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      background: colors.tealLight, border: `1px solid ${colors.tealMid}`,
-      borderRadius: radius.md, padding: "8px 14px", marginBottom: 20,
-    }}>
-      <span style={{ fontSize: font.sm, color: colors.teal, fontWeight: 600 }}>
-        Showing cached report · expires in {mins} min
-      </span>
-      <Button variant="ghost" icon={RefreshCw} onClick={onRefresh} disabled={loading} size="sm">
-        Refresh
-      </Button>
-    </div>
-  );
-}
 
 // ── All VAs Tab ───────────────────────────────────────────────────
 function AllVAsTab() {
@@ -259,6 +282,7 @@ function AllVAsTab() {
       if (cached) { setData(cached); return; }
     }
     setLoading(true); setError("");
+    if (force) cacheClear(CACHE_ALL);
     try {
       const result = await apiFetch(`/api/eow?start=${start}&end=${end}`);
       cacheSet(CACHE_ALL, result);
@@ -291,7 +315,6 @@ function AllVAsTab() {
     return true;
   }
 
-  // Apply community first — counts for the issue row reflect the chosen community
   const byCommunity = summaries.filter(matchCommunity);
 
   const issueCounts = {
@@ -305,6 +328,9 @@ function AllVAsTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <TopBarProgress active={loading} />
+      <TopBarCachedBanner cacheKey={CACHE_ALL} onRefresh={() => run(true)} loading={loading} />
+
       {/* Controls */}
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -318,10 +344,20 @@ function AllVAsTab() {
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
+      {/* Loading skeleton when generating with no prior data */}
+      {loading && !data && (
+        <>
+          <StatRow>
+            {Array.from({ length: 4 }).map((_, i) => <StatCardSkeleton key={i} />)}
+          </StatRow>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            {Array.from({ length: 6 }).map((_, i) => <VARowSkeleton key={i} />)}
+          </div>
+        </>
+      )}
+
       {data && (
         <>
-          <CachedBanner cacheKey={CACHE_ALL} onRefresh={() => run(true)} loading={loading} />
-
           {/* Totals stat cards */}
           <StatRow>
             <FractionStatCard icon={FileCheck} label="EODs Submitted"
@@ -457,25 +493,25 @@ function ByVATab() {
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState("");
 
-const allCache = cacheGet(CACHE_ALL);
-const vaList   = cacheGet(CACHE_KEYS.VA_LIST); 
+  const allCache = cacheGet(CACHE_ALL);
+  const vaList   = cacheGet(CACHE_KEYS.VA_LIST);
 
-const vaOptions = (() => {
-  const source = vaList
-    ? ["Main", "CBA"].flatMap(comm => {
-        const group = vaList.filter(v => v.community === comm);
-        if (!group.length) return [];
-        return [{ label: `${comm} Community`, options: group.map(v => ({ value: v.name, label: v.name })) }];
-      })
-    : allCache
-    ? ["Main", "CBA"].flatMap(comm => {
-        const group = allCache.va_summaries.filter(s => s.community === comm);
-        if (!group.length) return [];
-        return [{ label: `${comm} Community`, options: group.map(s => ({ value: s.va.name, label: s.va.name })) }];
-      })
-    : [];
-  return source;
-})();
+  const vaOptions = (() => {
+    const source = vaList
+      ? ["Main", "CBA"].flatMap(comm => {
+          const group = vaList.filter(v => v.community === comm);
+          if (!group.length) return [];
+          return [{ label: `${comm} Community`, options: group.map(v => ({ value: v.name, label: v.name })) }];
+        })
+      : allCache
+      ? ["Main", "CBA"].flatMap(comm => {
+          const group = allCache.va_summaries.filter(s => s.community === comm);
+          if (!group.length) return [];
+          return [{ label: `${comm} Community`, options: group.map(s => ({ value: s.va.name, label: s.va.name })) }];
+        })
+      : [];
+    return source;
+  })();
 
   // If all-report cache has data for this VA, use it directly
   function findInCache(name) {
@@ -491,14 +527,13 @@ const vaOptions = (() => {
       const cached = cacheGet(CACHE_VA);
       if (cached) { setData(cached); return; }
     }
-    // Try using the all-report cache first (no extra API call needed)
     const fromAll = findInCache(vaName);
     if (fromAll && !force) { cacheSet(CACHE_VA, fromAll); setData(fromAll); return; }
 
     setLoading(true); setError("");
+    if (force) cacheClear(CACHE_VA);
     try {
       const result = await apiFetch(`/api/eow?start=${start}&end=${end}`);
-      // Filter to just the selected VA
       const filtered = { ...result, va_summaries: result.va_summaries.filter(s => s.va.name === vaName) };
       cacheSet(CACHE_VA, filtered);
       setData(filtered);
@@ -511,6 +546,9 @@ const vaOptions = (() => {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+      <TopBarProgress active={loading} />
+      <TopBarCachedBanner cacheKey={CACHE_VA} onRefresh={() => run(true)} loading={loading} />
+
       {/* Controls */}
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
@@ -532,10 +570,30 @@ const vaOptions = (() => {
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
+      {/* Loading skeleton */}
+      {loading && !data && (
+        <>
+          {/* VA header skeleton */}
+          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+            <Skeleton width={48} height={48} radius={24} />
+            <div style={{ flex: 1 }}>
+              <Skeleton width={180} height={20} />
+              <Skeleton width={130} height={12} style={{ marginTop: 6 }} />
+            </div>
+          </div>
+          <StatRow>
+            {Array.from({ length: 4 }).map((_, i) => <StatCardSkeleton key={i} />)}
+          </StatRow>
+          <Card title="Weekly Breakdown" noPadding>
+            <div style={{ padding: "20px" }}>
+              <Skeleton width="100%" height={80} radius={6} />
+            </div>
+          </Card>
+        </>
+      )}
+
       {data && summary && (
         <>
-          <CachedBanner cacheKey={CACHE_VA} onRefresh={() => run(true)} loading={loading} />
-
           {/* VA header */}
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
             <Avatar name={summary.va.name} size={48} />

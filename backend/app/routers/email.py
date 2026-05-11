@@ -10,7 +10,10 @@ from app.notion import (
     va_works_on_date, get_active_contracts_by_id,
     EST,
 )
-from app.services.matching import names_match, fuzzy_find_eod, fuzzy_find_clockin
+from app.services.matching import (
+    names_match, fuzzy_find_eod, fuzzy_find_clockin,
+    is_project_based_contract,
+)
 from app.services.report import build_report_row
 from app.middleware.security import validate_date_range_30d, safe_error
 
@@ -83,20 +86,20 @@ def _build_report(date_str: str) -> dict:
             for cid in va.get("contract_ids", [])
             if cid in contracts_by_id
         ]
+        non_pb_contracts = [c for c in active_contracts if not is_project_based_contract(c)]
 
-        if not active_contracts:
-            ci  = va_cis[0] if va_cis else None
-            eod = va_eod_list[0] if va_eod_list else None
-            rows.append(build_report_row(va, None, comm, ci, eod, False, contract=None))
-        else:
-            for con in active_contracts:
-                con_client = con["client_name"]
-                con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
-                con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
-                rows.append(build_report_row(
-                    va, con_client, comm, con_ci, con_eod,
-                    ci_nv or eod_nv, contract=con
-                ))
+        # Skip any VA without active billable contracts
+        if not non_pb_contracts:
+            continue
+
+        for con in non_pb_contracts:
+            con_client = con["client_name"]
+            con_ci, ci_nv = fuzzy_find_clockin(va_cis, con_client)
+            con_eod, eod_nv = fuzzy_find_eod(va_eod_list, con_client)
+            rows.append(build_report_row(
+                va, con_client, comm, con_ci, con_eod,
+                ci_nv or eod_nv, contract=con
+            ))
 
     clocked_names = {r["va_name"] for r in rows if r["clock_in_status"] != "missing"}
 
@@ -279,8 +282,8 @@ def build_html_email(report: dict) -> str:
 def send_morning_report():
     try:
         yesterday = (datetime.now(EST) - timedelta(days=1)).strftime("%Y-%m-%d")
+        yesterday = validate_date_range_30d(yesterday)   # validate the date BEFORE building the report
         report    = _build_report(yesterday)
-        date = validate_date_range_30d(date)
 
         total_issues = len(report["missing"]) + len(report["late"])
         subject = (
