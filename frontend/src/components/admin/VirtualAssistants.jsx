@@ -3,6 +3,7 @@ import {
   FileCheck, CheckCircle2,
   Users, RefreshCw,
   Search, Send, AlertTriangle, Clock, UserX, UserCheck,
+  PauseCircle,
 } from "lucide-react";
 import { colors, font, radius, shadow }         from "../../styles/tokens";
 import { apiFetch }                             from "../../api";
@@ -17,7 +18,33 @@ import TopBarCachedBanner from "../ui/TopBarCachedBanner";
 import TopBarProgress from "../ui/TopBarProgress";
 import { Skeleton, TableRowSkeleton } from "../ui/Skeleton";
 
-const CACHE_KEY = CACHE_KEYS.VA_LIST;
+const CACHE_KEY      = CACHE_KEYS.VA_LIST;
+const DASH_CACHE_KEY = CACHE_KEYS.DASHBOARD;
+const STAT_RADIUS    = 8;
+
+// Inject StatBox hover styles once globally
+if (typeof document !== "undefined" && !document.getElementById("mt-va-stat-styles")) {
+  const tag = document.createElement("style");
+  tag.id = "mt-va-stat-styles";
+  tag.innerHTML = `
+    .mt-stat-box {
+      transition: border-color .15s, box-shadow .15s, transform .15s;
+    }
+    .mt-stat-box:hover {
+      border-color: ${colors.tealMid};
+      box-shadow: 0 2px 8px rgba(12, 184, 169, 0.08);
+      transform: translateY(-1px);
+    }
+    @keyframes mt-shift-fade {
+      from { opacity: 0; transform: translateY(2px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .mt-shift-fade {
+      animation: mt-shift-fade .18s ease-out;
+    }
+  `;
+  document.head.appendChild(tag);
+}
 
 // ── Constants ─────────────────────────────────────────────────────
 const TABS = [
@@ -42,6 +69,121 @@ const labelStyle = {
   display: "block", fontSize: font.sm, fontWeight: 700,
   color: colors.textBody, marginBottom: 6,
 };
+
+// ── Unified StatBox component (matches Dashboard's style) ────────
+function StatBox({ icon: Icon, value, label, accent }) {
+  const valueColor =
+    accent === "warning" ? colors.warning :
+    accent === "danger"  ? colors.danger  :
+    accent === "success" ? colors.success :
+    accent === "teal"    ? colors.teal    :
+    colors.textPrimary;
+
+  const iconBg =
+    accent === "warning" ? colors.warningLight :
+    accent === "danger"  ? colors.dangerLight  :
+    accent === "success" ? colors.successLight :
+    colors.tealLight;
+
+  return (
+    <div
+      className="mt-stat-box"
+      style={{
+        background: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: STAT_RADIUS,
+        padding: "16px 18px",
+        cursor: "default",
+        display: "flex",
+        alignItems: "center",
+        gap: 14,
+      }}
+    >
+      {Icon && (
+        <div style={{
+          width: 40, height: 40, borderRadius: 8,
+          background: iconBg,
+          display: "flex", alignItems: "center", justifyContent: "center",
+          flexShrink: 0,
+        }}>
+          <Icon size={18} color={valueColor} strokeWidth={2} />
+        </div>
+      )}
+      <div style={{ minWidth: 0 }}>
+        <div style={{
+          fontSize: 26, fontWeight: 800, color: valueColor, lineHeight: 1,
+          fontVariantNumeric: "tabular-nums",
+        }}>
+          {value}
+        </div>
+        <div style={{
+          fontSize: 11, color: colors.textMuted, marginTop: 6,
+          textTransform: "uppercase", letterSpacing: "0.06em", fontWeight: 700,
+          whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+        }}>
+          {label}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StatBoxSkeleton() {
+  return (
+    <div style={{
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: STAT_RADIUS,
+      padding: "16px 18px",
+      display: "flex",
+      alignItems: "center",
+      gap: 14,
+    }}>
+      <Skeleton width={40} height={40} radius={8} />
+      <div style={{ flex: 1 }}>
+        <Skeleton width={42} height={22} />
+        <Skeleton width={90} height={10} style={{ marginTop: 8 }} />
+      </div>
+    </div>
+  );
+}
+
+// ── Overview Stats — the 5 uniform cards above directory tables ──
+function OverviewStats({ vas, dashData, loading }) {
+  if (loading && vas.length === 0) {
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+        {Array.from({ length: 5 }).map((_, i) => <StatBoxSkeleton key={i} />)}
+      </div>
+    );
+  }
+
+  const total  = vas.length;
+  const agency = vas.filter(v => v.community === "Main").length;
+  const cba    = vas.filter(v => v.community === "CBA").length;
+  const noContract = dashData?.va_counts?.no_contract ?? 0;
+  const paused     = dashData?.va_counts?.paused_contracts ?? 0;
+
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+      <StatBox icon={Users}        value={total}      label="Total VAs" />
+      <StatBox icon={UserCheck}    value={agency}     label="Agency VAs" accent="teal" />
+      <StatBox icon={UserCheck}    value={cba}        label="CBA VAs"    accent="teal" />
+      <StatBox
+        icon={UserX}
+        value={noContract}
+        label="No Contracts"
+        accent={noContract > 0 ? "warning" : undefined}
+      />
+      <StatBox
+        icon={PauseCircle}
+        value={paused}
+        label="Paused Contracts"
+        accent={paused > 0 ? "warning" : undefined}
+      />
+    </div>
+  );
+}
 
 // ── VA Row in the list ────────────────────────────────────────────
 function VAListRow({ va, i }) {
@@ -77,285 +219,57 @@ function VAListRow({ va, i }) {
   );
 }
 
-// ── EOD Reports Tab ───────────────────────────────────────────────
-function EODTab() {
-  const [date,       setDate]       = useState(todayISO());
-  const [data,       setData]       = useState(null);
-  const [loading,    setLoading]    = useState(false);
-  const [error,      setError]      = useState("");
-  const [emailState, setEmailState] = useState("idle");
-
-  async function run() {
-    setLoading(true); setError(""); setData(null); setEmailState("idle");
-    try {
-      const result = await apiFetch(`/api/eod?date=${date}`);
-      setData(result);
-      logActivity(LOG_TYPES.EOD_CHECK, `EOD report checked for ${date}`, { date });
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  async function sendEmail() {
-    setEmailState("sending");
-    try {
-      await apiFetch(`/api/email/send-report/${date}`, { method: "POST" });
-      setEmailState("sent");
-      logActivity(LOG_TYPES.EMAIL_SENT, `EOD email sent for ${date}`, { date });
-    } catch (e) { setEmailState("error"); }
-  }
-
-  const missing  = data?.missing        ?? [];
-  const late     = data?.late_submissions ?? [];
-  const submitted = data?.eod_submissions ?? [];
-
+// ── Directory View (used by Active / Agency / CBA tabs) ──────────
+function DirectoryView({ vas, dashData, loading, error }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <TopBarProgress active={loading} />
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <OverviewStats vas={vas} dashData={dashData} loading={loading} />
 
-      <Card>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div>
-            <label style={labelStyle}>Date</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={dateInputStyle} />
-          </div>
-          <Button icon={Search} onClick={run} disabled={loading} style={{ height: 38, alignSelf: "flex-end" }}>
-            {loading ? "Loading…" : "Check EOD"}
-          </Button>
-          {data && (
-            <Button
-              icon={emailState === "sent" ? CheckCircle2 : Send}
-              variant={emailState === "sent" ? "success" : "primary"}
-              onClick={sendEmail}
-              disabled={emailState === "sending" || emailState === "sent"}
-              style={{ height: 38, alignSelf: "flex-end" }}
-            >
-              {emailState === "sending" ? "Sending…" : emailState === "sent" ? "Email Sent!" : emailState === "error" ? "Retry Send" : "Send Email"}
-            </Button>
-          )}
+      <div>
+        {/* Navy header */}
+        <div style={{
+          display: "flex", alignItems: "center", gap: 14,
+          padding: "10px 20px",
+          background: colors.navy,
+          borderRadius: `${radius.lg} ${radius.lg} 0 0`,
+        }}>
+          <div style={{ width: 36 }} />
+          <div style={{ flex: 1, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Name</div>
+          <div style={{ minWidth: 100, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</div>
+          <div style={{ fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Community</div>
         </div>
-        {emailState === "error" && <StatusBox variant="danger" style={{ marginTop: 12 }}>Failed to send email. Check backend config.</StatusBox>}
-      </Card>
 
-      {error && <StatusBox variant="danger">{error}</StatusBox>}
-
-      {data && (
-        <>
-          <StatRow>
-            <StatCard icon={Users}        label="Active VAs"        value={data.active_va_count} />
-            <StatCard icon={UserCheck}    label="Clocked In"        value={data.clocked_in_count}  highlight="teal" />
-            <StatCard icon={FileCheck}    label="EOD Submitted"     value={data.submitted_count}   highlight="success" />
-            <StatCard icon={UserX}        label="Missing EOD"       value={data.missing_count}     highlight={data.missing_count > 0 ? "danger" : "success"} />
-            <StatCard icon={Clock}        label="Late Submissions"  value={data.late_count}        highlight={data.late_count > 0 ? "warning" : "success"} />
-          </StatRow>
-
-          {missing.length === 0 && late.length === 0
-            ? <StatusBox variant="success">All VAs submitted their EOD reports on time for {date}.</StatusBox>
-            : null
-          }
-
-          {missing.length > 0 && (
-            <Card title={`Missing EOD — ${missing.length} VA${missing.length !== 1 ? "s" : ""}`} noPadding>
-              {missing.map((va, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
-                }}>
-                  <CommunityBadge community={va.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    <VANameLink name={va.name} />
-                  </span>
-                  {va.missing_client && <StatusBadge variant="info">{va.missing_client}</StatusBadge>}
-                  <StatusBadge variant={va.clocked_in ? "warning" : "danger"}>
-                    {va.clocked_in ? "No EOD" : "No Clock-in"}
-                  </StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-
-          {late.length > 0 && (
-            <Card title={`Late Submissions — ${late.length}`} noPadding>
-              {late.map((r, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.warningLight : "#FFFBEB",
-                }}>
-                  <CommunityBadge community={r.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    <VANameLink name={r.name} />
-                  </span>
-                  {r.client && <span style={{ fontSize: font.xs, color: colors.textMuted }}>{r.client}</span>}
-                  <StatusBadge variant="warning">{r.punctuality?.submitted_est} · {r.punctuality?.minutes_late}m late</StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-
-          {submitted.length > 0 && (
-            <Card title={`Submitted on Time — ${submitted.filter(r => r.punctuality?.on_time).length}`} noPadding>
-              {submitted.filter(r => r.punctuality?.on_time).map((r, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-                }}>
-                  <CommunityBadge community={r.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    <VANameLink name={r.name} />
-                  </span>
-                  {r.client && <span style={{ fontSize: font.xs, color: colors.textMuted }}>{r.client}</span>}
-                  <StatusBadge variant="success">{r.punctuality?.submitted_est}</StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-// ── Attendance Tab ────────────────────────────────────────────────
-function AttendanceTab() {
-  const [date,    setDate]    = useState(todayISO());
-  const [data,    setData]    = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [error,   setError]   = useState("");
-
-  async function run() {
-    setLoading(true); setError(""); setData(null);
-    try {
-      const result = await apiFetch(`/api/attendance?date=${date}`);
-      setData(result);
-      logActivity(LOG_TYPES.ATTENDANCE_CHECK, `Attendance checked for ${date}`, { date });
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }
-
-  const clockIns   = data?.clock_ins     ?? [];
-  const noRecord   = data?.no_record     ?? [];
-  const lateIns    = data?.late_clock_ins ?? [];
-  const verifyCount = data?.verify_count ?? 0;
-
-  function clockInName(c) {
-    const name = c.va_name || c.raw_name;
-    const asterisk = c.needs_verification
-      ? <span title="Client name needs manual verification" style={{ color: colors.warning, fontWeight: 800, marginLeft: 4 }}>*</span>
-      : null;
-    return (
-      <>
-        {c.va_name ? <VANameLink name={c.va_name} /> : name}
-        {asterisk}
-      </>
-    );
-  }
-
-  return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <TopBarProgress active={loading} />
-
-      <Card>
-        <div style={{ display: "flex", gap: 12, alignItems: "flex-end" }}>
-          <div>
-            <label style={labelStyle}>Date</label>
-            <input type="date" value={date} onChange={e => setDate(e.target.value)} style={dateInputStyle} />
-          </div>
-          <Button icon={Search} onClick={run} disabled={loading} style={{ height: 38, alignSelf: "flex-end" }}>
-            {loading ? "Loading…" : "Check Attendance"}
-          </Button>
-        </div>
-      </Card>
-
-      {error && <StatusBox variant="danger">{error}</StatusBox>}
-
-      {data && (
-        <>
-          <StatRow>
-            <StatCard icon={Users}     label="Active VAs"     value={data.vas?.length ?? 0} />
-            <StatCard icon={UserCheck} label="Clocked In"     value={clockIns.length}    highlight="teal" />
-            <StatCard icon={Clock}     label="Late Clock-ins" value={lateIns.length}     highlight={lateIns.length > 0 ? "warning" : "success"} />
-            <StatCard icon={UserX}     label="No Record"      value={noRecord.length}    highlight={noRecord.length > 0 ? "danger" : "success"} />
-          </StatRow>
-
-          {verifyCount > 0 && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 8,
-              background: colors.warningLight, border: `1.5px solid ${colors.warningBorder}`,
-              borderRadius: radius.md, padding: "8px 14px",
+        {/* Rows */}
+        <div style={{
+          border: `1px solid ${colors.border}`, borderTop: "none",
+          borderRadius: `0 0 ${radius.lg} ${radius.lg}`,
+          overflow: "hidden", boxShadow: shadow.card,
+        }}>
+          {loading && Array.from({ length: 8 }).map((_, i) => (
+            <div key={i} style={{
+              display: "flex", alignItems: "center", gap: 14,
+              padding: "12px 20px",
+              background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
+              borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
             }}>
-              <AlertTriangle size={14} color={colors.warning} />
-              <span style={{ fontSize: font.sm, fontWeight: 600, color: colors.warning }}>
-                {verifyCount} clock-in{verifyCount !== 1 ? "s" : ""} need{verifyCount === 1 ? "s" : ""} client name verification (marked with *)
-              </span>
+              <Skeleton width={36} height={36} radius={18} />
+              <div style={{ flex: 1 }}>
+                <Skeleton width="40%" height={14} />
+                <Skeleton width="55%" height={10} style={{ marginTop: 6 }} />
+              </div>
+              <Skeleton width={100} height={12} />
+              <Skeleton width={50} height={20} radius={4} />
             </div>
+          ))}
+          {error && <StatusBox variant="danger" style={{ margin: 16 }}>{error}</StatusBox>}
+          {!loading && vas.length === 0 && (
+            <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>No VAs found.</div>
           )}
-
-          {noRecord.length > 0 && (
-            <Card title={`No Clock-in Record — ${noRecord.length} VA${noRecord.length !== 1 ? "s" : ""}`} noPadding>
-              {noRecord.map((va, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.dangerLight : "#FFF8F8",
-                }}>
-                  <CommunityBadge community={va.community} />
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    <VANameLink name={va.name} />
-                  </span>
-                  <StatusBadge variant="danger">No record</StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-
-          {lateIns.length > 0 && (
-            <Card title={`Late Clock-ins — ${lateIns.length}`} noPadding>
-              {lateIns.map((c, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.warningLight : "#FFFBEB",
-                }}>
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    {clockInName(c)}
-                  </span>
-                  <StatusBadge variant="warning">
-                    {c.punctuality?.clocked_in_est} · {c.punctuality?.minutes_late}m late
-                  </StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-
-          {clockIns.length > 0 && (
-            <Card title={`All Clock-ins — ${clockIns.length}`} noPadding>
-              {clockIns.map((c, i) => (
-                <div key={i} style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "10px 20px",
-                  borderTop: i > 0 ? `1px solid ${colors.border}` : "none",
-                  background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-                }}>
-                  <span style={{ flex: 1, fontWeight: 600, fontSize: font.base, color: colors.textPrimary }}>
-                    {clockInName(c)}
-                  </span>
-                  <StatusBadge variant={c.punctuality?.on_time ? "success" : "warning"}>
-                    {c.punctuality?.clocked_in_est}
-                    {!c.punctuality?.on_time && ` · ${c.punctuality?.minutes_late}m late`}
-                  </StatusBadge>
-                </div>
-              ))}
-            </Card>
-          )}
-        </>
-      )}
+          {!loading && vas.map((va, i) => (
+            <VAListRow key={va.id || i} va={va} i={i} />
+          ))}
+        </div>
+      </div>
     </div>
   );
 }
@@ -403,7 +317,6 @@ function StatusCell({ status, minutesLate, minutesEarly }) {
     return <span style={{ color: "#7C3AED", fontWeight: 600 }}>{minutesEarly} min early</span>;
   return <span style={{ color: colors.success, fontWeight: 600 }}>On-time</span>;
 }
-
 
 // ── Reports Tab ───────────────────────────────────────────────────
 function ReportsTab() {
@@ -482,7 +395,6 @@ function ReportsTab() {
       <TopBarProgress active={loading} />
       <TopBarCachedBanner cacheKey={CACHE_KEYS.REPORT} onRefresh={refresh} loading={loading} />
 
-      {/* ── Controls ──────────────────────────────────────────── */}
       <Card>
         <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
           <div>
@@ -523,27 +435,11 @@ function ReportsTab() {
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
-      {/* Loading skeleton when fetching with no prior data */}
       {loading && !data && (
         <>
-          <StatRow>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} style={{
-                flex: 1, minWidth: 130,
-                background: colors.surface,
-                border: `1px solid ${colors.border}`,
-                borderRadius: radius.lg,
-                padding: "16px 18px",
-                display: "flex", alignItems: "center", gap: 14,
-              }}>
-                <Skeleton width={40} height={40} radius={8} />
-                <div style={{ flex: 1 }}>
-                  <Skeleton width={36} height={22} />
-                  <Skeleton width={80} height={10} style={{ marginTop: 6 }} />
-                </div>
-              </div>
-            ))}
-          </StatRow>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+            {Array.from({ length: 5 }).map((_, i) => <StatBoxSkeleton key={i} />)}
+          </div>
 
           <Card noPadding style={{ overflowX: "auto" }}>
             <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 780 }}>
@@ -570,16 +466,25 @@ function ReportsTab() {
 
       {data && (
         <>
-          {/* ── Stat cards ────────────────────────────────────── */}
-          <StatRow>
-            <StatCard icon={Users}     label="Active VAs"       value={stats.active_vas ?? 0} />
-            <StatCard icon={UserCheck} label="Clocked In"       value={stats.clocked_in ?? 0}    highlight="teal" />
-            <StatCard icon={FileCheck} label="EOD Submitted"    value={stats.eod_submitted ?? 0} highlight="success" />
-            <StatCard icon={UserX}     label="Missing EOD"      value={stats.missing_eod ?? 0}   highlight={stats.missing_eod > 0 ? "danger" : "success"} />
-            <StatCard icon={Clock}     label="Late Submissions" value={stats.late ?? 0}          highlight={stats.late > 0 ? "warning" : "success"} />
-          </StatRow>
+          {/* Unified stat boxes */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(5, 1fr)", gap: 12 }}>
+            <StatBox icon={Users}     value={stats.active_vas ?? 0}    label="Active VAs" />
+            <StatBox icon={UserCheck} value={stats.clocked_in ?? 0}    label="Clocked In"      accent="teal" />
+            <StatBox icon={FileCheck} value={stats.eod_submitted ?? 0} label="EOD Submitted"   accent="success" />
+            <StatBox
+              icon={UserX}
+              value={stats.missing_eod ?? 0}
+              label="Missing EOD"
+              accent={stats.missing_eod > 0 ? "danger" : "success"}
+            />
+            <StatBox
+              icon={Clock}
+              value={stats.late ?? 0}
+              label="Late Submissions"
+              accent={stats.late > 0 ? "warning" : "success"}
+            />
+          </div>
 
-          {/* ── Filter pills + search ─────────────────────────── */}
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
             <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
             <FilterPill label="All"     count={counts.all}     active={filter === "all"}     onClick={() => setFilter("all")}     color={colors.teal} />
@@ -606,7 +511,6 @@ function ReportsTab() {
             </div>
           </div>
 
-          {/* ── Table ─────────────────────────────────────────── */}
           {filtered.length === 0 ? (
             <StatusBox variant="info">
               {filter === "all"
@@ -681,35 +585,46 @@ function ReportsTab() {
 
 // ── Root ──────────────────────────────────────────────────────────
 export default function VirtualAssistants() {
-  const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
-  const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
-  const [error,     setError]     = useState("");
-  const [activeTab, setActiveTab] = useState("dashboard");
+  const [vas,        setVAs]        = useState(() => cacheGet(CACHE_KEY) ?? []);
+  const [dashData,   setDashData]   = useState(() => cacheGet(DASH_CACHE_KEY) ?? null);
+  const [loading,    setLoading]    = useState(!cacheGet(CACHE_KEY));
+  const [error,      setError]      = useState("");
+  const [activeTab,  setActiveTab]  = useState("dashboard");
 
   useEffect(() => {
-    if (cacheGet(CACHE_KEY)) return;
-    apiFetch("/api/inspector/vas")
-      .then(d => { const list = d.vas ?? []; cacheSet(CACHE_KEY, list); setVAs(list); })
-      .catch(e => setError(e.message))
-      .finally(() => setLoading(false));
+    if (!cacheGet(CACHE_KEY)) {
+      apiFetch("/api/inspector/vas")
+        .then(d => { const list = d.vas ?? []; cacheSet(CACHE_KEY, list); setVAs(list); })
+        .catch(e => setError(e.message))
+        .finally(() => setLoading(false));
+    }
+    if (!cacheGet(DASH_CACHE_KEY)) {
+      apiFetch("/api/dashboard")
+        .then(d => { cacheSet(DASH_CACHE_KEY, d); setDashData(d); })
+        .catch(() => {});
+    }
   }, []);
 
   function refresh() {
     cacheClear(CACHE_KEY);
+    cacheClear(DASH_CACHE_KEY);
     setLoading(true); setError("");
     apiFetch("/api/inspector/vas")
       .then(d => { const list = d.vas ?? []; cacheSet(CACHE_KEY, list); setVAs(list); })
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
+    apiFetch("/api/dashboard")
+      .then(d => { cacheSet(DASH_CACHE_KEY, d); setDashData(d); })
+      .catch(() => {});
   }
 
-  const filtered = activeTab === "active" ? vas
+  const isDirectoryTab = activeTab === "active" || activeTab === "main" || activeTab === "cba";
+  const isReportTab    = activeTab === "reports" || activeTab === "dashboard";
+
+  const filteredVAs = activeTab === "active" ? vas
     : activeTab === "main"   ? vas.filter(v => v.community === "Main")
-    : vas.filter(v => v.community === "CBA");
-
-  const cbaMultiple = vas.filter(v => v.community === "CBA" && (v.contract_ids?.length ?? 0) > 1);
-
-  const isReportTab = activeTab === "reports" || activeTab === "dashboard";
+    : activeTab === "cba"    ? vas.filter(v => v.community === "CBA")
+    : vas;
 
   return (
     <div style={{ fontFamily: font.family, width: "100%" }}>
@@ -718,88 +633,29 @@ export default function VirtualAssistants() {
         subtitle="Directory of all active VAs with EOD report history and profile details."
       />
 
-      {/* Progress bar shows whenever directory data is fetching */}
-      {!isReportTab && <TopBarProgress active={loading} />}
-      {!isReportTab && <TopBarCachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />}
-
-      {/* Summary pills — only show on directory tabs */}
-      {!isReportTab && (
-        <div style={{ display: "flex", gap: 12, marginBottom: 24, flexWrap: "wrap" }}>
-          {[
-            { label: "Total",               value: vas.length,                                     color: colors.teal,          bg: colors.tealLight },
-            { label: "VAs with 2+ Clients", value: cbaMultiple.length,                             color: colors.communityMain, bg: colors.infoLight },
-            { label: "Main Community",      value: vas.filter(v => v.community === "Main").length,  color: colors.communityMain, bg: colors.infoLight },
-            { label: "CBA Community",       value: vas.filter(v => v.community === "CBA").length,   color: colors.communityCBA,  bg: "#FFF7ED"        },
-          ].map((p, i) => (
-            <div key={i} style={{
-              display: "flex", alignItems: "center", gap: 10,
-              background: p.bg, borderRadius: radius.lg,
-              padding: "10px 18px", border: `1px solid ${p.color}22`,
-            }}>
-              <span style={{ fontSize: 22, fontWeight: 800, color: p.color }}>{p.value}</span>
-              <span style={{ fontSize: font.sm, fontWeight: 600, color: p.color }}>{p.label}</span>
-            </div>
-          ))}
-        </div>
-      )}
+      {isDirectoryTab && <TopBarProgress active={loading} />}
+      {isDirectoryTab && <TopBarCachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />}
 
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
-      {/* EOD & Attendance tabs */}
-      {activeTab === "dashboard"    && <DashboardTab />}
-      {activeTab === "reports"    && <ReportsTab />}
-
-      {/* Directory tabs */}
-      {!isReportTab && (
-        <>
-          <div style={{
-            display: "flex", alignItems: "center", gap: 14,
-            padding: "10px 20px",
-            background: colors.navy,
-            borderRadius: `${radius.lg} ${radius.lg} 0 0`,
-          }}>
-            <div style={{ width: 36 }} />
-            <div style={{ flex: 1, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Name</div>
-            <div style={{ minWidth: 100, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</div>
-            <div style={{ fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Community</div>
-          </div>
-
-          <div style={{
-            border: `1px solid ${colors.border}`, borderTop: "none",
-            borderRadius: `0 0 ${radius.lg} ${radius.lg}`,
-            overflow: "hidden", boxShadow: shadow.card,
-          }}>
-            {loading && Array.from({ length: 8 }).map((_, i) => (
-              <div key={i} style={{
-                display: "flex", alignItems: "center", gap: 14,
-                padding: "12px 20px",
-                background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-                borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
-              }}>
-                <Skeleton width={36} height={36} radius={18} />
-                <div style={{ flex: 1 }}>
-                  <Skeleton width="40%" height={14} />
-                  <Skeleton width="55%" height={10} style={{ marginTop: 6 }} />
-                </div>
-                <Skeleton width={100} height={12} />
-                <Skeleton width={50} height={20} radius={4} />
-              </div>
-            ))}
-            {error && <StatusBox variant="danger" style={{ margin: 16 }}>{error}</StatusBox>}
-            {!loading && filtered.length === 0 && (
-              <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>No VAs found.</div>
-            )}
-            {!loading && filtered.map((va, i) => (
-              <VAListRow key={va.id || i} va={va} i={i} />
-            ))}
-          </div>
-        </>
-      )}
-
+      {/* Fade animation on tab change — key forces remount */}
+      <div key={activeTab} className="mt-page-fade">
+        {activeTab === "dashboard" && <DashboardTab />}
+        {activeTab === "reports"   && <ReportsTab />}
+        {isDirectoryTab && (
+          <DirectoryView
+            vas={filteredVAs}
+            dashData={dashData}
+            loading={loading}
+            error={error}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
+// ── Live Shift Dashboard ──────────────────────────────────────────
 const SHIFT_TABS = [
   { id: "morning",   label: "Morning Shift",   sub: "5:00 AM – 10:00 AM" },
   { id: "mid",       label: "Mid Shift",       sub: "10:00 AM – 3:00 PM" },
@@ -808,19 +664,47 @@ const SHIFT_TABS = [
 
 function ShiftTabBar({ tabs, active, onChange }) {
   return (
-    <div style={{ display: "flex", gap: 0, borderBottom: `2px solid ${colors.border}`, marginBottom: 16 }}>
+    <div style={{
+      display: "flex",
+      gap: 4,
+      borderBottom: `1px solid ${colors.border}`,
+      padding: "0 8px",
+    }}>
       {tabs.map(t => {
         const isActive = t.id === active;
         return (
-          <button key={t.id} onClick={() => onChange(t.id)} style={{
-            padding: "10px 20px", background: "none", border: "none", cursor: "pointer",
-            fontFamily: font.family, fontSize: font.sm, fontWeight: 700,
-            color: isActive ? colors.teal : colors.textMuted,
-            borderBottom: isActive ? `2px solid ${colors.teal}` : "2px solid transparent",
-            marginBottom: -2, transition: "all .15s",
-          }}>
+          <button
+            key={t.id}
+            onClick={() => onChange(t.id)}
+            style={{
+              padding: "14px 20px",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+              fontFamily: font.family,
+              fontSize: font.sm,
+              fontWeight: 700,
+              color: isActive ? colors.teal : colors.textMuted,
+              borderBottom: isActive ? `2.5px solid ${colors.teal}` : "2.5px solid transparent",
+              marginBottom: -1, 
+              transition: "color .18s, border-color .18s",
+              textAlign: "left",
+            }}
+            onMouseEnter={e => {
+              if (!isActive) e.currentTarget.style.color = colors.textBody;
+            }}
+            onMouseLeave={e => {
+              if (!isActive) e.currentTarget.style.color = colors.textMuted;
+            }}
+          >
             <div>{t.label}</div>
-            <div style={{ fontSize: font.xs, fontWeight: 500, color: isActive ? colors.teal : colors.textFaint, marginTop: 2 }}>
+            <div style={{
+              fontSize: font.xs,
+              fontWeight: 500,
+              color: isActive ? colors.teal : colors.textFaint,
+              marginTop: 2,
+              transition: "color .18s",
+            }}>
               {t.sub}
             </div>
           </button>
@@ -929,7 +813,6 @@ function DashboardTab() {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-
       <TopBarProgress active={loading} />
       <TopBarCachedBanner cacheKey={VA_DASH_KEY} onRefresh={fetchData} loading={loading} />
 
@@ -948,205 +831,201 @@ function DashboardTab() {
             }
           </div>
         </div>
-
         <Button variant="ghost" icon={RefreshCw} onClick={fetchData} disabled={loading} size="sm">
           {loading ? "Loading…" : "Refresh"}
         </Button>
       </div>
 
-      {/* Stat cards — skeletons while loading without prior data */}
+      {/* Unified stat boxes */}
       {loading && !data ? (
-        <StatRow>
-          {Array.from({ length: 4 }).map((_, i) => (
-            <div key={i} style={{
-              flex: 1, minWidth: 130,
-              background: colors.surface,
-              border: `1px solid ${colors.border}`,
-              borderRadius: radius.lg,
-              padding: "16px 18px",
-              display: "flex", alignItems: "center", gap: 14,
-            }}>
-              <Skeleton width={40} height={40} radius={8} />
-              <div style={{ flex: 1 }}>
-                <Skeleton width={36} height={22} />
-                <Skeleton width={80} height={10} style={{ marginTop: 6 }} />
-              </div>
-            </div>
-          ))}
-        </StatRow>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          {Array.from({ length: 4 }).map((_, i) => <StatBoxSkeleton key={i} />)}
+        </div>
       ) : data ? (
-        <StatRow>
-          <StatCard icon={Users}     label="Working Today" value={stats.total} />
-          <StatCard icon={Clock}     label="Clocked In"    value={stats.clocked_in}  highlight="teal" />
-          <StatCard icon={UserCheck} label="Clocked Out"   value={stats.clocked_out} highlight="success" />
-          <StatCard icon={UserX}     label="Absent"        value={stats.absent}
-            highlight={stats.absent > 0 ? "danger" : "success"} />
-        </StatRow>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 12 }}>
+          <StatBox icon={Users}     value={stats.total}       label="Working Today" />
+          <StatBox icon={Clock}     value={stats.clocked_in}  label="Clocked In"    accent="teal" />
+          <StatBox icon={UserCheck} value={stats.clocked_out} label="Clocked Out"   accent="success" />
+          <StatBox
+            icon={UserX}
+            value={stats.absent}
+            label="Absent"
+            accent={stats.absent > 0 ? "danger" : "success"}
+          />
+        </div>
       ) : null}
 
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
-      {/* Shift sub-tabs */}
-      <ShiftTabBar tabs={SHIFT_TABS} active={shiftTab} onChange={setShiftTab} />
+      {/* ── UNIFIED TABBED CARD ── */}
+      <Card noPadding>
+        {/* Shift tabs at top */}
+        <ShiftTabBar tabs={SHIFT_TABS} active={shiftTab} onChange={setShiftTab} />
 
-      {/* ── Filter pills + search ─── */}
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
-        <FilterPill
-          label="All"
-          count={shiftRows.length}
-          active={community === "all"}
-          onClick={() => setCommunity("all")}
-          color={colors.teal}
-        />
-        <FilterPill
-          label="CBA"
-          count={shiftRows.filter(r => r.community === "CBA").length}
-          active={community === "cba"}
-          onClick={() => setCommunity("cba")}
-          color={colors.communityCBA}
-        />
-        <FilterPill
-          label="Agency"
-          count={shiftRows.filter(r => r.community === "Main").length}
-          active={community === "main"}
-          onClick={() => setCommunity("main")}
-          color={colors.communityMain}
-        />
-        <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
-          <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
-          <input
-            type="text"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            placeholder="Search name or client…"
-            style={{
-              paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
-              border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
-              fontSize: font.sm, fontFamily: font.family, outline: "none",
-              background: colors.surface, color: colors.textPrimary, width: 220,
-            }}
-            onFocus={e => e.target.style.borderColor = colors.teal}
-            onBlur={e  => e.target.style.borderColor = colors.border}
-          />
-        </div>
-      </div>
+        {/* Animated content area — filter row + table together */}
+        <div key={shiftTab} className="mt-shift-fade">
 
-      {/* Table — skeleton while loading without prior data */}
-      {loading && !data ? (
-        <Card noPadding>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: colors.navy }}>
-                  {["Name", "Client", "Shift Time", "Clock In EST", "Punctuality", "Status", "Clock Out EST", "Submission"].map(h => (
-                    <th key={h} style={th}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: 6 }).map((_, i) => (
-                  <TableRowSkeleton
-                    key={i}
-                    rowBg={i % 2 === 0 ? colors.surface : colors.surfaceAlt}
-                    cellWidths={["60%", "60%", "55%", "55%", "55%", "50%", "55%", "55%"]}
-                  />
-                ))}
-              </tbody>
-            </table>
+          {/* Filter row */}
+          <div style={{
+            padding: "14px 20px",
+            display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center",
+            borderBottom: `1px solid ${colors.border}`,
+            background: colors.surfaceAlt,
+          }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>Filter:</span>
+            <FilterPill
+              label="All"
+              count={shiftRows.length}
+              active={community === "all"}
+              onClick={() => setCommunity("all")}
+              color={colors.teal}
+            />
+            <FilterPill
+              label="CBA"
+              count={shiftRows.filter(r => r.community === "CBA").length}
+              active={community === "cba"}
+              onClick={() => setCommunity("cba")}
+              color={colors.communityCBA}
+            />
+            <FilterPill
+              label="Agency"
+              count={shiftRows.filter(r => r.community === "Main").length}
+              active={community === "main"}
+              onClick={() => setCommunity("main")}
+              color={colors.communityMain}
+            />
+            <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+              <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name or client…"
+                style={{
+                  paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                  border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                  fontSize: font.sm, fontFamily: font.family, outline: "none",
+                  background: colors.surface, color: colors.textPrimary, width: 240,
+                }}
+                onFocus={e => e.target.style.borderColor = colors.teal}
+                onBlur={e  => e.target.style.borderColor = colors.border}
+              />
+            </div>
           </div>
-        </Card>
-      ) : rows.length === 0 ? (
-        <StatusBox variant="info">
-          {search
-            ? `No results matching "${search}".`
-            : community === "all"
-              ? `No VAs scheduled for the ${SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.`
-              : `No ${community === "cba" ? "CBA" : "Agency"} VAs scheduled for this shift.`
-          }
-        </StatusBox>
-      ) : (
-        <Card noPadding>
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ width: "100%", borderCollapse: "collapse" }}>
-              <thead>
-                <tr style={{ background: colors.navy }}>
-                  <th style={th}>Name</th>
-                  <th style={th}>Client</th>
-                  <th style={th}>Shift Time</th>
-                  <th style={th}>Clock In EST</th>
-                  <th style={th}>Punctuality</th>
-                  <th style={th}>Status</th>
-                  <th style={th}>Clock Out EST</th>
-                  <th style={th}>Submission</th>
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
-                    <td style={td}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <CommunityBadge community={r.community} />
-                        <VANameLink
-                          name={r.va_name}
-                          style={{ fontWeight: 600, color: colors.textPrimary }}
-                        />
-                      </div>
-                    </td>
-                    <td style={td}>{r.client}</td>
-                    <td style={{ ...td, fontWeight: 600, color: colors.teal, fontSize: font.xs }}>
-                      {r.shift_time}
-                    </td>
-                    <td style={td}>
-                      {r.clock_in
-                        ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
-                        : r.status === "Upcoming"
-                          ? <span style={{ color: colors.textFaint }}>—</span>
-                          : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
-                      }
-                    </td>
-                    <td style={td}>
-                      {r.status === "Absent"
-                        ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
-                        : r.status === "Upcoming"
-                          ? <span style={{ color: colors.textFaint }}>—</span>
-                          : <PunctualityCell
-                              status={r.clock_in_status}
-                              minutesLate={r.clock_in_minutes_late}
-                              minutesEarly={r.clock_in_minutes_early}
-                            />
-                      }
-                    </td>
-                    <td style={td}>
-                      <StatusBadgeDash status={r.status} />
-                    </td>
-                    <td style={td}>
-                      {r.status === "Clocked Out"
-                        ? <span style={{ fontWeight: 500 }}>{r.clock_out?.replace(" EST", "") || "—"}</span>
-                        : r.status === "Clocked In" && r.shift_ended
-                          ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
-                          : <span style={{ color: colors.textFaint }}>—</span>
-                      }
-                    </td>
-                    <td style={td}>
-                      {r.status === "Clocked Out"
-                        ? <PunctualityCell
-                            status={r.clock_out_status}
-                            minutesLate={r.clock_out_minutes_late}
-                            minutesEarly={r.clock_out_minutes_early}
-                          />
-                        : r.status === "Clocked In" && r.shift_ended
-                          ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
-                          : <span style={{ color: colors.textFaint }}>—</span>
-                      }
-                    </td>
+
+          {/* Table area — flush bottom of the card */}
+          {loading && !data ? (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: colors.navy }}>
+                    {["Name", "Client", "Shift Time", "Clock In EST", "Punctuality", "Status", "Clock Out EST", "Submission"].map(h => (
+                      <th key={h} style={th}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Card>
-      )}
+                </thead>
+                <tbody>
+                  {Array.from({ length: 6 }).map((_, i) => (
+                    <TableRowSkeleton
+                      key={i}
+                      rowBg={i % 2 === 0 ? colors.surface : colors.surfaceAlt}
+                      cellWidths={["60%", "60%", "55%", "55%", "55%", "50%", "55%", "55%"]}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : rows.length === 0 ? (
+            <div style={{ padding: "32px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>
+              {search
+                ? `No results matching "${search}".`
+                : community === "all"
+                  ? `No VAs scheduled for the ${SHIFT_TABS.find(t => t.id === shiftTab)?.label.toLowerCase() || "selected shift"}.`
+                  : `No ${community === "cba" ? "CBA" : "Agency"} VAs scheduled for this shift.`
+              }
+            </div>
+          ) : (
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                <thead>
+                  <tr style={{ background: colors.navy }}>
+                    <th style={th}>Name</th>
+                    <th style={th}>Client</th>
+                    <th style={th}>Shift Time</th>
+                    <th style={th}>Clock In EST</th>
+                    <th style={th}>Punctuality</th>
+                    <th style={th}>Status</th>
+                    <th style={th}>Clock Out EST</th>
+                    <th style={th}>Submission</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
+                      <td style={td}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <CommunityBadge community={r.community} />
+                          <VANameLink
+                            name={r.va_name}
+                            style={{ fontWeight: 600, color: colors.textPrimary }}
+                          />
+                        </div>
+                      </td>
+                      <td style={td}>{r.client}</td>
+                      <td style={{ ...td, fontWeight: 600, color: colors.teal, fontSize: font.xs }}>
+                        {r.shift_time}
+                      </td>
+                      <td style={td}>
+                        {r.clock_in
+                          ? <span style={{ fontWeight: 500 }}>{r.clock_in.replace(" EST", "")}</span>
+                          : r.status === "Upcoming"
+                            ? <span style={{ color: colors.textFaint }}>—</span>
+                            : <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                        }
+                      </td>
+                      <td style={td}>
+                        {r.status === "Absent"
+                          ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                          : r.status === "Upcoming"
+                            ? <span style={{ color: colors.textFaint }}>—</span>
+                            : <PunctualityCell
+                                status={r.clock_in_status}
+                                minutesLate={r.clock_in_minutes_late}
+                                minutesEarly={r.clock_in_minutes_early}
+                              />
+                        }
+                      </td>
+                      <td style={td}>
+                        <StatusBadgeDash status={r.status} />
+                      </td>
+                      <td style={td}>
+                        {r.status === "Clocked Out"
+                          ? <span style={{ fontWeight: 500 }}>{r.clock_out?.replace(" EST", "") || "—"}</span>
+                          : r.status === "Clocked In" && r.shift_ended
+                            ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                            : <span style={{ color: colors.textFaint }}>—</span>
+                        }
+                      </td>
+                      <td style={td}>
+                        {r.status === "Clocked Out"
+                          ? <PunctualityCell
+                              status={r.clock_out_status}
+                              minutesLate={r.clock_out_minutes_late}
+                              minutesEarly={r.clock_out_minutes_early}
+                            />
+                          : r.status === "Clocked In" && r.shift_ended
+                            ? <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>
+                            : <span style={{ color: colors.textFaint }}>—</span>
+                        }
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </Card>
     </div>
   );
 }
