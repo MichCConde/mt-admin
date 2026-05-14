@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional
 from app.notion import *
 
 # ── VA Database ───────────────────────────────────────────────────
@@ -10,6 +11,51 @@ EXCLUDED_TEAMS      = {"Internal", "Project Based"}
 
 _va_cache = {"data": None, "expires": 0.0}
 
+
+def _extract_rollup_phone(page: dict, prop_name: str = "Phone") -> Optional[str]:
+    """Extract a phone number from a Notion rollup property.
+
+    Rollups nest the value inside .rollup.array[i].<source_type>.
+    Handles common source types: phone_number, rich_text, title, and
+    formula (string or number). Returns the first non-empty value found.
+    """
+    prop = page.get("properties", {}).get(prop_name)
+    if not prop or prop.get("type") != "rollup":
+        return None
+
+    rollup = prop.get("rollup", {})
+    if rollup.get("type") != "array":
+        return None
+
+    for item in rollup.get("array", []):
+        item_type = item.get("type")
+
+        if item_type == "phone_number":
+            value = item.get("phone_number")
+            if value:
+                return value
+
+        elif item_type == "rich_text":
+            rt = item.get("rich_text", [])
+            if rt and rt[0].get("plain_text"):
+                return rt[0]["plain_text"]
+
+        elif item_type == "title":
+            title = item.get("title", [])
+            if title and title[0].get("plain_text"):
+                return title[0]["plain_text"]
+
+        elif item_type == "formula":
+            formula = item.get("formula", {})
+            ftype = formula.get("type")
+            if ftype == "string" and formula.get("string"):
+                return formula["string"]
+            if ftype == "number" and formula.get("number") is not None:
+                return str(formula["number"])
+
+    return None
+
+
 def get_active_vas_cached() -> list:
     import time
     now = time.time()
@@ -19,6 +65,7 @@ def get_active_vas_cached() -> list:
     _va_cache["data"]    = result
     _va_cache["expires"] = now + 300
     return result
+
 
 def get_active_vas() -> list:
     pages = query_all(DB["va"], {
@@ -31,6 +78,7 @@ def get_active_vas() -> list:
 
     vas = []
     for p in pages:
+
         name       = get_prop(p, "Name").strip()
         status     = get_prop(p, "Status")
         emp_status = get_prop(p, "Emp Status")
@@ -47,15 +95,18 @@ def get_active_vas() -> list:
             "name":           name,
             "community":      get_prop(p, "Community "),
             "email":          get_prop(p, "MT Email Address"),
-            "phone":          get_prop(p, "Phone"),
-            "start_date":     get_prop(p, "MT Start Date"),      
+            "phone":          _extract_rollup_phone(p),
+            "start_date":     get_prop(p, "MT Start Date"),
             "schedule":       get_prop(p, "Schedule"),
             "schedule_notes": get_prop(p, "Schedule Notes"),
             "contract_ids":   get_prop(p, "Contracts"),
-            "start_shift":    get_prop(p, "Shift Start"),      
-            "end_shift":      get_prop(p, "Shift End"),        
+            "start_shift":    get_prop(p, "Shift Start"),
+            "end_shift":      get_prop(p, "Shift End"),
             "status":         status,
         })
+    import json
+    if pages.index(p) == 0:   # only the first VA, to keep logs short
+        print("PHONE PROP:", json.dumps(p["properties"].get("Phone"), indent=2, default=str))
 
     return sorted(vas, key=lambda v: v["name"])
 
@@ -67,6 +118,7 @@ _SCHEDULE_WORKDAYS = {
     "Mon - Sun": {0, 1, 2, 3, 4, 5},
     "Flexible":  {0, 1, 2, 3, 4, 5},
 }
+
 
 def va_works_on_date(va: dict, date_str: str) -> bool:
     weekday  = datetime.strptime(date_str, "%Y-%m-%d").weekday()

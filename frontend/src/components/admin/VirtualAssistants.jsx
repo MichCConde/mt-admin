@@ -1,15 +1,16 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   FileCheck, CheckCircle2,
   Users, RefreshCw,
   Search, Send, AlertTriangle, Clock, UserX, UserCheck,
-  PauseCircle,
+  PauseCircle, ChevronDown,
 } from "lucide-react";
 import { colors, font, radius, shadow }         from "../../styles/tokens";
 import { apiFetch }                             from "../../api";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { Card, PageHeader, TabBar, StatRow }    from "../ui/Structure";
 import { Avatar, CommunityBadge, StatCard, StatusBadge, StatusBox } from "../ui/Indicators";
+import { Select }                               from "../ui/Inputs";
 import Button                                   from "../ui/Button";
 import { logActivity, LOG_TYPES }               from "../../utils/logger";
 import FilterPill from "../ui/FilterPill";
@@ -17,12 +18,13 @@ import { useVAProfile, VANameLink } from "../../contexts/VAProfileContext";
 import TopBarCachedBanner from "../ui/TopBarCachedBanner";
 import TopBarProgress from "../ui/TopBarProgress";
 import { Skeleton, TableRowSkeleton } from "../ui/Skeleton";
+import { VAProfileBody } from "../ui/VAProfileModal";
 
 const CACHE_KEY      = CACHE_KEYS.VA_LIST;
 const DASH_CACHE_KEY = CACHE_KEYS.DASHBOARD;
 const STAT_RADIUS    = 8;
 
-// Inject StatBox hover styles once globally
+// Inject local styles once globally
 if (typeof document !== "undefined" && !document.getElementById("mt-va-stat-styles")) {
   const tag = document.createElement("style");
   tag.id = "mt-va-stat-styles";
@@ -46,13 +48,35 @@ if (typeof document !== "undefined" && !document.getElementById("mt-va-stat-styl
   document.head.appendChild(tag);
 }
 
-// ── Constants ─────────────────────────────────────────────────────
+// ── Table style constants ────────────────────────────────────────
+const TABLE_TH = {
+  padding: "12px 16px",
+  fontSize: font.xs,
+  fontWeight: 700,
+  color: "#fff",
+  textAlign: "left",
+  letterSpacing: "0.05em",
+  textTransform: "uppercase",
+  whiteSpace: "nowrap",
+};
+
+const TABLE_TD = {
+  padding: "12px 16px",
+  fontSize: font.sm,
+  color: colors.textBody,
+  borderTop: `1px solid ${colors.border}`,
+  whiteSpace: "nowrap",
+  verticalAlign: "middle",
+};
+
+// ── Tabs ─────────────────────────────────────────────────────────
 const TABS = [
-  { id: "dashboard",  label: "Dashboard"     },
-  { id: "reports",    label: "Reports"       },
-  { id: "active",     label: "Active"        },
-  { id: "main",       label: "Agency"        },
-  { id: "cba",        label: "CBA"           },
+  { id: "dashboard",  label: "Dashboard"          },
+  { id: "reports",    label: "Reports"            },
+  { id: "active",     label: "Active"             },
+  { id: "main",       label: "Agency"             },
+  { id: "cba",        label: "CBA"                },
+  { id: "individual", label: "Individual Profile" },
 ];
 
 function todayISO() {
@@ -70,7 +94,7 @@ const labelStyle = {
   color: colors.textBody, marginBottom: 6,
 };
 
-// ── Unified StatBox component (matches Dashboard's style) ────────
+// ── Unified StatBox ──────────────────────────────────────────────
 function StatBox({ icon: Icon, value, label, accent }) {
   const valueColor =
     accent === "warning" ? colors.warning :
@@ -148,7 +172,7 @@ function StatBoxSkeleton() {
   );
 }
 
-// ── Overview Stats — the 5 uniform cards above directory tables ──
+// ── Overview Stats — 5 cards above directory tables ──────────────
 function OverviewStats({ vas, dashData, loading }) {
   if (loading && vas.length === 0) {
     return (
@@ -185,96 +209,267 @@ function OverviewStats({ vas, dashData, loading }) {
   );
 }
 
-// ── VA Row in the list ────────────────────────────────────────────
+// ── VA Row in the directory table ────────────────────────────────
 function VAListRow({ va, i }) {
   const { openVAProfile } = useVAProfile();
   const clientCount = va.contract_ids?.length ?? 0;
+  const rowBg = i % 2 === 0 ? colors.surface : colors.surfaceAlt;
+
   return (
-    <button
+    <tr
       onClick={() => openVAProfile(va.name)}
       style={{
-        display: "flex", alignItems: "center", gap: 14,
-        width: "100%", padding: "12px 20px",
-        background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-        borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
-        border: "none", cursor: "pointer", fontFamily: font.family,
-        textAlign: "left", transition: "background .1s",
+        background: rowBg,
+        cursor: "pointer",
+        transition: "background .12s",
       }}
       onMouseEnter={e => e.currentTarget.style.background = colors.tealLight}
-      onMouseLeave={e => e.currentTarget.style.background = i % 2 === 0 ? colors.surface : colors.surfaceAlt}
+      onMouseLeave={e => e.currentTarget.style.background = rowBg}
     >
-      <Avatar name={va.name} size={36} />
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>{va.name}</div>
-        <div style={{ fontSize: font.xs, color: colors.textMuted, marginTop: 2 }}>{va.email || "—"}</div>
-      </div>
-      <div style={{ minWidth: 100, fontSize: font.sm, color: colors.textBody }}>{va.schedule || "—"}</div>
-      {va.community === "CBA" && (
-        <StatusBadge variant={clientCount > 1 ? "teal" : "neutral"}>
-          {clientCount > 0 ? `${clientCount} client${clientCount !== 1 ? "s" : ""}` : "No clients"}
-        </StatusBadge>
-      )}
-      <CommunityBadge community={va.community} />
-    </button>
+      {/* Name + Avatar */}
+      <td style={TABLE_TD}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <Avatar name={va.name} size={36} />
+          <div style={{ fontWeight: 700, color: colors.textPrimary, fontSize: font.base }}>
+            {va.name}
+          </div>
+        </div>
+      </td>
+
+      {/* Community */}
+      <td style={{ ...TABLE_TD, textAlign: "center" }}>
+        <CommunityBadge community={va.community} />
+      </td>
+
+      {/* Email */}
+      <td style={{ ...TABLE_TD, color: colors.textMuted, fontSize: font.xs }}>
+        {va.email || <span style={{ color: colors.textFaint }}>—</span>}
+      </td>
+
+      {/* Phone */}
+      <td style={TABLE_TD}>
+        {va.phone || <span style={{ color: colors.textFaint }}>—</span>}
+      </td>
+
+      {/* Work Days */}
+      <td style={TABLE_TD}>
+        {va.schedule || <span style={{ color: colors.textFaint }}>—</span>}
+      </td>
+
+      {/* Clients */}
+      <td style={{ ...TABLE_TD, textAlign: "center" }}>
+        {clientCount === 0
+          ? <StatusBadge variant="neutral">None</StatusBadge>
+          : <StatusBadge variant={clientCount > 1 ? "teal" : "info"}>
+              {clientCount} client{clientCount !== 1 ? "s" : ""}
+            </StatusBadge>
+        }
+      </td>
+    </tr>
   );
 }
 
-// ── Directory View (used by Active / Agency / CBA tabs) ──────────
+// ── Directory View (Active / Agency / CBA tabs) ──────────────────
 function DirectoryView({ vas, dashData, loading, error }) {
+  const [filterWorkDays, setFilterWorkDays] = useState("all");
+  const [filterClients,  setFilterClients]  = useState("all");
+  const [search,         setSearch]         = useState("");
+
+  // Unique filter options computed from data
+  const workDayOrder = { "Mon - Fri": 1, "Mon - Sun": 2, "Flexible": 3 };
+  const workDayValues = [...new Set(vas.map(v => v.schedule).filter(Boolean))]
+    .sort((a, b) => (workDayOrder[a] ?? 99) - (workDayOrder[b] ?? 99));
+
+  const clientCounts   = [...new Set(vas.map(v => v.contract_ids?.length ?? 0))].sort((a, b) => a - b);
+  const hasNoContracts = clientCounts.includes(0);
+  const nonZeroCounts  = clientCounts.filter(c => c > 0);
+
+  // Counts for pill badges
+  const countWorkDay = (day) =>
+    vas.filter(v => day === "all" ? true : v.schedule === day).length;
+  const countClients = (key) =>
+    vas.filter(v => {
+      const c = v.contract_ids?.length ?? 0;
+      if (key === "all")  return true;
+      if (key === "none") return c === 0;
+      return c === key;
+    }).length;
+
+  // Apply filters + search
+  const filtered = vas.filter(va => {
+    if (filterWorkDays !== "all" && va.schedule !== filterWorkDays) return false;
+
+    const count = va.contract_ids?.length ?? 0;
+    if (filterClients === "none" && count !== 0) return false;
+    if (filterClients !== "all" && filterClients !== "none" && count !== filterClients) return false;
+
+    if (search) {
+      const q = search.toLowerCase();
+      const matches = (va.name  || "").toLowerCase().includes(q)
+                   || (va.email || "").toLowerCase().includes(q)
+                   || (va.phone || "").toLowerCase().includes(q);
+      if (!matches) return false;
+    }
+
+    return true;
+  });
+
+  const hasActiveFilter = filterWorkDays !== "all" || filterClients !== "all" || !!search;
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <OverviewStats vas={vas} dashData={dashData} loading={loading} />
 
-      <div>
-        {/* Navy header */}
-        <div style={{
-          display: "flex", alignItems: "center", gap: 14,
-          padding: "10px 20px",
-          background: colors.navy,
-          borderRadius: `${radius.lg} ${radius.lg} 0 0`,
-        }}>
-          <div style={{ width: 36 }} />
-          <div style={{ flex: 1, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Name</div>
-          <div style={{ minWidth: 100, fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Schedule</div>
-          <div style={{ fontSize: font.xs, fontWeight: 700, color: "#fff", textTransform: "uppercase", letterSpacing: "0.05em" }}>Community</div>
-        </div>
+      {error && <StatusBox variant="danger">{error}</StatusBox>}
 
-        {/* Rows */}
-        <div style={{
-          border: `1px solid ${colors.border}`, borderTop: "none",
-          borderRadius: `0 0 ${radius.lg} ${radius.lg}`,
-          overflow: "hidden", boxShadow: shadow.card,
-        }}>
-          {loading && Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} style={{
-              display: "flex", alignItems: "center", gap: 14,
-              padding: "12px 20px",
-              background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-              borderTop: i === 0 ? "none" : `1px solid ${colors.border}`,
-            }}>
-              <Skeleton width={36} height={36} radius={18} />
-              <div style={{ flex: 1 }}>
-                <Skeleton width="40%" height={14} />
-                <Skeleton width="55%" height={10} style={{ marginTop: 6 }} />
-              </div>
-              <Skeleton width={100} height={12} />
-              <Skeleton width={50} height={20} radius={4} />
+      {/* Filters */}
+      {!loading && vas.length > 0 && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+          {/* Work Days + Search */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>
+              Work Days:
+            </span>
+            <FilterPill
+              label="All"
+              count={vas.length}
+              active={filterWorkDays === "all"}
+              onClick={() => setFilterWorkDays("all")}
+              color={colors.teal}
+            />
+            {workDayValues.map(day => (
+              <FilterPill
+                key={day}
+                label={day}
+                count={countWorkDay(day)}
+                active={filterWorkDays === day}
+                onClick={() => setFilterWorkDays(day)}
+                color={colors.teal}
+              />
+            ))}
+
+            <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+              <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search name, email, or phone…"
+                style={{
+                  paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                  border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                  fontSize: font.sm, fontFamily: font.family, outline: "none",
+                  background: colors.surface, color: colors.textPrimary, width: 260,
+                }}
+                onFocus={e => e.target.style.borderColor = colors.teal}
+                onBlur={e  => e.target.style.borderColor = colors.border}
+              />
             </div>
-          ))}
-          {error && <StatusBox variant="danger" style={{ margin: 16 }}>{error}</StatusBox>}
-          {!loading && vas.length === 0 && (
-            <div style={{ padding: "40px 20px", textAlign: "center", color: colors.textFaint, fontSize: font.sm }}>No VAs found.</div>
-          )}
-          {!loading && vas.map((va, i) => (
-            <VAListRow key={va.id || i} va={va} i={i} />
-          ))}
+          </div>
+
+          {/* Clients */}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+            <span style={{ fontSize: font.sm, fontWeight: 700, color: colors.textMuted, marginRight: 4 }}>
+              Clients:
+            </span>
+            <FilterPill
+              label="All"
+              count={vas.length}
+              active={filterClients === "all"}
+              onClick={() => setFilterClients("all")}
+              color={colors.teal}
+            />
+            {hasNoContracts && (
+              <FilterPill
+                label="No Contracts"
+                count={countClients("none")}
+                active={filterClients === "none"}
+                onClick={() => setFilterClients("none")}
+                color={colors.warning}
+              />
+            )}
+            {nonZeroCounts.map(count => (
+              <FilterPill
+                key={count}
+                label={`${count} client${count !== 1 ? "s" : ""}`}
+                count={countClients(count)}
+                active={filterClients === count}
+                onClick={() => setFilterClients(count)}
+                color={count > 1 ? colors.teal : colors.communityMain}
+              />
+            ))}
+          </div>
+
         </div>
-      </div>
+      )}
+
+      {/* Table */}
+      <Card noPadding style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 980 }}>
+          <thead>
+            <tr style={{ background: colors.navy }}>
+              <th style={TABLE_TH}>Name</th>
+              <th style={{ ...TABLE_TH, textAlign: "center" }}>Community</th>
+              <th style={TABLE_TH}>Email</th>
+              <th style={TABLE_TH}>Phone</th>
+              <th style={TABLE_TH}>Work Days</th>
+              <th style={{ ...TABLE_TH, textAlign: "center" }}>Clients</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading && Array.from({ length: 8 }).map((_, i) => (
+              <tr key={i} style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}>
+                <td style={TABLE_TD}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <Skeleton width={36} height={36} radius={18} />
+                    <Skeleton width={140} height={14} />
+                  </div>
+                </td>
+                <td style={{ ...TABLE_TD, textAlign: "center" }}>
+                  <Skeleton width={50} height={20} radius={4} style={{ display: "inline-block" }} />
+                </td>
+                <td style={TABLE_TD}><Skeleton width={170} height={12} /></td>
+                <td style={TABLE_TD}><Skeleton width={110} height={12} /></td>
+                <td style={TABLE_TD}><Skeleton width={70} height={12} /></td>
+                <td style={{ ...TABLE_TD, textAlign: "center" }}>
+                  <Skeleton width={60} height={20} radius={4} style={{ display: "inline-block" }} />
+                </td>
+              </tr>
+            ))}
+            {!loading && filtered.length === 0 && (
+              <tr>
+                <td colSpan={6} style={{
+                  padding: "40px 20px",
+                  textAlign: "center",
+                  color: colors.textFaint,
+                  fontSize: font.sm,
+                  borderTop: `1px solid ${colors.border}`,
+                }}>
+                  {hasActiveFilter
+                    ? "No VAs match the current filters."
+                    : "No VAs found."}
+                </td>
+              </tr>
+            )}
+            {!loading && filtered.map((va, i) => (
+              <VAListRow key={va.id || i} va={va} i={i} />
+            ))}
+          </tbody>
+        </table>
+      </Card>
+
+      {/* Filtered count summary */}
+      {!loading && hasActiveFilter && (
+        <div style={{ fontSize: font.xs, color: colors.textMuted, textAlign: "right" }}>
+          Showing {filtered.length} of {vas.length} VAs
+        </div>
+      )}
     </div>
   );
 }
 
-// ── CSV export helper ─────────────────────────────────────────────
+// ── CSV export helper ───────────────────────────────────────────
 function exportCSV(rows, date) {
   const header = ["Name", "Client", "Community", "Clock In", "Punctuality", "Clock Out", "Submission", "Status"];
   const csvRows = rows.map(r => [
@@ -307,7 +502,7 @@ function exportCSV(rows, date) {
   URL.revokeObjectURL(url);
 }
 
-// ── Status cell renderer ──────────────────────────────────────────
+// ── Status cell renderer ────────────────────────────────────────
 function StatusCell({ status, minutesLate, minutesEarly }) {
   if (status === "missing")
     return <span style={{ color: colors.danger, fontWeight: 600 }}>Missing</span>;
@@ -318,7 +513,7 @@ function StatusCell({ status, minutesLate, minutesEarly }) {
   return <span style={{ color: colors.success, fontWeight: 600 }}>On-time</span>;
 }
 
-// ── Reports Tab ───────────────────────────────────────────────────
+// ── Reports Tab ─────────────────────────────────────────────────
 function ReportsTab() {
   const cached = cacheGet(CACHE_KEYS.REPORT);
 
@@ -583,7 +778,183 @@ function ReportsTab() {
   );
 }
 
-// ── Root ──────────────────────────────────────────────────────────
+// ── VASearchSelect — combo box (search + dropdown) ──────────────
+function VASearchSelect({ vas, value, onChange, placeholder = "Search VA name…" }) {
+  const [search, setSearch] = useState(value || "");
+  const [open,   setOpen]   = useState(false);
+  const wrapRef = useRef(null);
+
+  // Keep input text in sync when value changes externally
+  useEffect(() => {
+    setSearch(value || "");
+  }, [value]);
+
+  // Close on outside click
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setSearch(value || "");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [value]);
+
+  // Filter by search; when search matches the current value exactly, show all so user can browse
+  const isSearching = search && search !== value;
+  const filtered = isSearching
+    ? vas.filter(v => v.name.toLowerCase().includes(search.toLowerCase()))
+    : vas;
+
+  // Group by community
+  const groups = [
+    { id: "Main", label: "Agency Community", items: filtered.filter(v => v.community === "Main") },
+    { id: "CBA",  label: "CBA Community",    items: filtered.filter(v => v.community === "CBA")  },
+  ].filter(g => g.items.length > 0);
+
+  function pick(vaName) {
+    onChange(vaName);
+    setSearch(vaName);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", maxWidth: 420 }}>
+      <label style={{
+        display: "block", fontSize: font.sm, fontWeight: 700,
+        color: colors.textBody, marginBottom: 6,
+      }}>
+        Virtual Assistant
+      </label>
+
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{
+          position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+          color: colors.textFaint, pointerEvents: "none",
+        }} />
+        <input
+          type="text"
+          value={search}
+          placeholder={placeholder}
+          onChange={e => {
+            setSearch(e.target.value);
+            if (!open) setOpen(true);
+          }}
+          onFocus={e => {
+            setOpen(true);
+            e.target.select();
+          }}
+          style={{
+            width: "100%",
+            paddingLeft: 36, paddingRight: 36, paddingTop: 9, paddingBottom: 9,
+            border: `1.5px solid ${open ? colors.teal : colors.border}`,
+            borderRadius: radius.md,
+            fontSize: font.base, fontFamily: font.family, outline: "none",
+            background: colors.surface, color: colors.textPrimary,
+            transition: "border-color .12s",
+          }}
+        />
+        <ChevronDown size={14} style={{
+          position: "absolute", right: 12, top: "50%", transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`,
+          color: colors.textMuted, pointerEvents: "none",
+          transition: "transform .15s",
+        }} />
+      </div>
+
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+          maxHeight: 320, overflowY: "auto",
+          background: colors.surface,
+          border: `1.5px solid ${colors.border}`,
+          borderRadius: radius.md,
+          boxShadow: "0 6px 20px rgba(13,31,60,0.12)",
+          zIndex: 50,
+        }}>
+          {groups.length === 0 ? (
+            <div style={{ padding: "16px 14px", textAlign: "center", color: colors.textMuted, fontSize: font.sm }}>
+              No VAs match "{search}"
+            </div>
+          ) : groups.map(g => (
+            <div key={g.id}>
+              <div style={{
+                padding: "8px 14px",
+                fontSize: font.xs, fontWeight: 700,
+                color: colors.textMuted,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+                background: colors.surfaceAlt,
+                position: "sticky", top: 0, zIndex: 1,
+              }}>
+                {g.label} ({g.items.length})
+              </div>
+              {g.items.map(v => {
+                const isSelected = v.name === value;
+                return (
+                  <button
+                    key={v.name}
+                    onClick={() => pick(v.name)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      width: "100%", padding: "10px 14px",
+                      border: "none", borderTop: `1px solid ${colors.border}`,
+                      background: isSelected ? colors.tealLight : "transparent",
+                      color: isSelected ? colors.teal : colors.textPrimary,
+                      fontWeight: isSelected ? 700 : 500,
+                      fontFamily: font.family, fontSize: font.sm,
+                      cursor: "pointer", textAlign: "left",
+                      transition: "background .1s",
+                    }}
+                    onMouseEnter={e => {
+                      if (!isSelected) e.currentTarget.style.background = colors.surfaceAlt;
+                    }}
+                    onMouseLeave={e => {
+                      if (!isSelected) e.currentTarget.style.background = "transparent";
+                    }}
+                  >
+                    <Avatar name={v.name} size={28} />
+                    <span style={{ flex: 1 }}>{v.name}</span>
+                    <CommunityBadge community={v.community} />
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Individual Profile Tab ───────────────────────────────────────
+function IndividualProfileTab({ vas }) {
+  const [selectedVA, setSelectedVA] = useState("");
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card>
+        <VASearchSelect
+          vas={vas}
+          value={selectedVA}
+          onChange={setSelectedVA}
+          placeholder="Search or pick a VA…"
+        />
+      </Card>
+
+      {selectedVA ? (
+        <Card noPadding>
+          <VAProfileBody vaName={selectedVA} />
+        </Card>
+      ) : (
+        <StatusBox variant="info">
+          Search for a VA above to view their profile, contracts, and EOD report history.
+        </StatusBox>
+      )}
+    </div>
+  );
+}
+
+// ── Root ─────────────────────────────────────────────────────────
 export default function VirtualAssistants() {
   const [vas,        setVAs]        = useState(() => cacheGet(CACHE_KEY) ?? []);
   const [dashData,   setDashData]   = useState(() => cacheGet(DASH_CACHE_KEY) ?? null);
@@ -619,7 +990,6 @@ export default function VirtualAssistants() {
   }
 
   const isDirectoryTab = activeTab === "active" || activeTab === "main" || activeTab === "cba";
-  const isReportTab    = activeTab === "reports" || activeTab === "dashboard";
 
   const filteredVAs = activeTab === "active" ? vas
     : activeTab === "main"   ? vas.filter(v => v.community === "Main")
@@ -640,8 +1010,9 @@ export default function VirtualAssistants() {
 
       {/* Fade animation on tab change — key forces remount */}
       <div key={activeTab} className="mt-page-fade">
-        {activeTab === "dashboard" && <DashboardTab />}
-        {activeTab === "reports"   && <ReportsTab />}
+        {activeTab === "dashboard"  && <DashboardTab />}
+        {activeTab === "reports"    && <ReportsTab />}
+        {activeTab === "individual" && <IndividualProfileTab vas={vas} />}
         {isDirectoryTab && (
           <DirectoryView
             vas={filteredVAs}
@@ -655,7 +1026,7 @@ export default function VirtualAssistants() {
   );
 }
 
-// ── Live Shift Dashboard ──────────────────────────────────────────
+// ── Live Shift Dashboard ─────────────────────────────────────────
 const SHIFT_TABS = [
   { id: "morning",   label: "Morning Shift",   sub: "5:00 AM – 10:00 AM" },
   { id: "mid",       label: "Mid Shift",       sub: "10:00 AM – 3:00 PM" },
@@ -686,7 +1057,7 @@ function ShiftTabBar({ tabs, active, onChange }) {
               fontWeight: 700,
               color: isActive ? colors.teal : colors.textMuted,
               borderBottom: isActive ? `2.5px solid ${colors.teal}` : "2.5px solid transparent",
-              marginBottom: -1, 
+              marginBottom: -1,
               transition: "color .18s, border-color .18s",
               textAlign: "left",
             }}
