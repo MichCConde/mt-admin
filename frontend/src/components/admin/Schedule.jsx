@@ -1,5 +1,5 @@
-import { useState, useEffect }   from "react";
-import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, Download } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, Download, ChevronDown } from "lucide-react";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
@@ -17,14 +17,48 @@ const DAYS     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
 const HOURS    = Array.from({ length: 17 }, (_, i) => i + 6); // 6 AM → 10 PM
 
+// Square-ish corners for the schedule grids
+const TABLE_RADIUS = 4;
+
+// ── Inject animation styles once ─────────────────────────────────
+if (typeof document !== "undefined" && !document.getElementById("mt-schedule-styles")) {
+  const tag = document.createElement("style");
+  tag.id = "mt-schedule-styles";
+  tag.innerHTML = `
+    @keyframes mt-schedule-fade {
+      from { opacity: 0; transform: translateY(2px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .mt-schedule-fade { animation: mt-schedule-fade .22s ease-out; }
+  `;
+  document.head.appendChild(tag);
+}
+
+// ── Filter: only schedule VAs that are active AND have a contract ─
+function isActiveScheduleVA(va) {
+  // Exclude paused / inactive (check multiple common field shapes)
+  const status = String(va.status ?? va.va_status ?? "").toLowerCase();
+  if (status === "paused" || status === "pause" || status === "inactive") return false;
+  if (va.is_paused === true || va.paused === true) return false;
+
+  // Exclude VAs with no active contracts
+  if (va.has_active_contract === false) return false;
+  if (Array.isArray(va.active_contracts) && va.active_contracts.length === 0) return false;
+  if (Array.isArray(va.contracts)        && va.contracts.length === 0)        return false;
+  if (Array.isArray(va.contract_ids)     && va.contract_ids.length === 0)     return false;
+
+  return true;
+}
+
 function fmtHour(h) {
   const ap = h >= 12 ? "PM" : "AM";
   return `${h % 12 || 12}:00 ${ap}`;
 }
 
-function initials(name) {
-  const p = name.trim().split(" ");
-  return p.length === 1 ? p[0].slice(0, 2).toUpperCase() : (p[0][0] + p[p.length - 1][0]).toUpperCase();
+function fmtShortTime(h, m) {
+  const ap  = h >= 12 ? "PM" : "AM";
+  const h12 = h % 12 || 12;
+  return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, "0")}${ap}`;
 }
 
 // Time options: every 30 min from 6 AM to 10 PM
@@ -49,6 +83,138 @@ const STATUS_CONFIG = {
   no_data:     { color: colors.textFaint, bg: colors.surfaceAlt,   border: colors.border,        Icon: MinusCircle,  label: "No shift data"    },
 };
 
+const labelStyle = {
+  display: "block", fontSize: font.sm, fontWeight: 700,
+  color: colors.textBody, marginBottom: 6,
+};
+
+// ── VA Search + Dropdown combo box ───────────────────────────────
+function VASearchSelect({ vas, value, onChange, placeholder = "Search VA name…" }) {
+  const [search, setSearch] = useState(value || "");
+  const [open,   setOpen]   = useState(false);
+  const wrapRef = useRef(null);
+
+  useEffect(() => { setSearch(value || ""); }, [value]);
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target)) {
+        setOpen(false);
+        setSearch(value || "");
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [value]);
+
+  const isSearching = search && search !== value;
+  const filtered = isSearching
+    ? vas.filter(v => v.name.toLowerCase().includes(search.toLowerCase()))
+    : vas;
+
+  const groups = [
+    { id: "Main", label: "Agency Community", items: filtered.filter(v => v.community === "Main") },
+    { id: "CBA",  label: "CBA Community",    items: filtered.filter(v => v.community === "CBA")  },
+  ].filter(g => g.items.length > 0);
+
+  function pick(vaName) {
+    onChange(vaName);
+    setSearch(vaName);
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} style={{ position: "relative", maxWidth: 360, minWidth: 280 }}>
+      <label style={labelStyle}>Virtual Assistant</label>
+      <div style={{ position: "relative" }}>
+        <Search size={14} style={{
+          position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)",
+          color: colors.textFaint, pointerEvents: "none",
+        }} />
+        <input
+          type="text"
+          value={search}
+          placeholder={placeholder}
+          onChange={e => { setSearch(e.target.value); if (!open) setOpen(true); }}
+          onFocus={e => { setOpen(true); e.target.select(); }}
+          style={{
+            width: "100%",
+            paddingLeft: 36, paddingRight: 36, paddingTop: 9, paddingBottom: 9,
+            border: `1.5px solid ${open ? colors.teal : colors.border}`,
+            borderRadius: radius.md,
+            fontSize: font.base, fontFamily: font.family, outline: "none",
+            background: colors.surface, color: colors.textPrimary,
+            transition: "border-color .12s",
+          }}
+        />
+        <ChevronDown size={14} style={{
+          position: "absolute", right: 12, top: "50%",
+          transform: `translateY(-50%) rotate(${open ? 180 : 0}deg)`,
+          color: colors.textMuted, pointerEvents: "none",
+          transition: "transform .15s",
+        }} />
+      </div>
+      {open && (
+        <div style={{
+          position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0,
+          maxHeight: 320, overflowY: "auto",
+          background: colors.surface,
+          border: `1.5px solid ${colors.border}`,
+          borderRadius: radius.md,
+          boxShadow: "0 6px 20px rgba(13,31,60,0.12)",
+          zIndex: 50,
+        }}>
+          {groups.length === 0 ? (
+            <div style={{ padding: "16px 14px", textAlign: "center", color: colors.textMuted, fontSize: font.sm }}>
+              No VAs match "{search}"
+            </div>
+          ) : groups.map(g => (
+            <div key={g.id}>
+              <div style={{
+                padding: "8px 14px",
+                fontSize: font.xs, fontWeight: 700,
+                color: colors.textMuted,
+                textTransform: "uppercase", letterSpacing: "0.05em",
+                background: colors.surfaceAlt,
+                position: "sticky", top: 0, zIndex: 1,
+              }}>
+                {g.label} ({g.items.length})
+              </div>
+              {g.items.map(v => {
+                const isSelected = v.name === value;
+                return (
+                  <button
+                    key={v.name}
+                    onClick={() => pick(v.name)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10,
+                      width: "100%", padding: "10px 14px",
+                      border: "none", borderTop: `1px solid ${colors.border}`,
+                      background: isSelected ? colors.tealLight : "transparent",
+                      color: isSelected ? colors.teal : colors.textPrimary,
+                      fontWeight: isSelected ? 700 : 500,
+                      fontFamily: font.family, fontSize: font.sm,
+                      cursor: "pointer", textAlign: "left",
+                      transition: "background .1s",
+                    }}
+                    onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = colors.surfaceAlt; }}
+                    onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}
+                  >
+                    <Avatar name={v.name} size={28} />
+                    <span style={{ flex: 1 }}>{v.name}</span>
+                    <CommunityBadge community={v.community} />
+                  </button>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── CSV download ─────────────────────────────────────────────────
 async function downloadAvailability(apiFetchFn, setDownloading) {
   setDownloading(true);
   try {
@@ -56,7 +222,6 @@ async function downloadAvailability(apiFetchFn, setDownloading) {
 
     const rows = [["Period", "Time Slot", "VA Name", "Current Clients", "Slots Open", "Current Schedule"]];
 
-    // Morning
     const morningSlots = Object.entries(data.morning || {});
     if (morningSlots.length > 0) {
       rows.push(["", "", "", "", "", ""]);
@@ -69,7 +234,6 @@ async function downloadAvailability(apiFetchFn, setDownloading) {
       }
     }
 
-    // Afternoon
     const afternoonSlots = Object.entries(data.afternoon || {});
     if (afternoonSlots.length > 0) {
       rows.push(["", "", "", "", "", ""]);
@@ -86,7 +250,6 @@ async function downloadAvailability(apiFetchFn, setDownloading) {
       rows.push(["No CBA VAs with available time slots found.", "", "", "", "", ""]);
     }
 
-    // Summary row
     rows.push(["", "", "", "", "", ""]);
     rows.push([`Total VAs with availability: ${data.total_available_vas}`, "", "", "", "", ""]);
 
@@ -109,11 +272,10 @@ async function downloadAvailability(apiFetchFn, setDownloading) {
   }
 }
 
-// ── Schedule table skeleton ───────────────────────────────────────
+// ── Schedule table skeleton ──────────────────────────────────────
 function ScheduleTableSkeleton() {
   return (
     <>
-      {/* Legend skeleton */}
       <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap", marginTop: 16, marginBottom: 24 }}>
         {[1, 2, 3].map(i => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -122,23 +284,17 @@ function ScheduleTableSkeleton() {
           </div>
         ))}
       </div>
-
-      {/* Table skeleton — real header (static labels) + shimmer body rows */}
-      <Card noPadding style={{ overflowX: "auto" }}>
+      <Card noPadding style={{ overflowX: "auto", borderRadius: TABLE_RADIUS }}>
         <table style={{ ...tableWrap, minWidth: 700 }}>
           <thead>
             <tr style={{ background: colors.navy }}>
-              <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>
-                VA
-              </th>
+              <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>VA</th>
               {DAYS.map((d) => (
                 <th key={d} style={{
                   ...ths,
                   background: (d === "Sat" || d === "Sun") ? "#0A1525" : colors.navy,
                   borderLeft: `1px solid ${colors.navyBorder}`,
-                }}>
-                  {d}
-                </th>
+                }}>{d}</th>
               ))}
             </tr>
           </thead>
@@ -171,7 +327,7 @@ function ScheduleTableSkeleton() {
   );
 }
 
-// ── Root ──────────────────────────────────────────────────────────
+// ── Root ─────────────────────────────────────────────────────────
 const CACHE_KEY = CACHE_KEYS.SCHEDULE;
 
 export default function Schedule() {
@@ -179,7 +335,6 @@ export default function Schedule() {
   const [vas,       setVAs]       = useState(() => cacheGet(CACHE_KEY) ?? []);
   const [loading,   setLoading]   = useState(!cacheGet(CACHE_KEY));
   const [error,     setError]     = useState("");
-  const [downloading, setDownloading] = useState(false);
 
   useEffect(() => {
     if (cacheGet(CACHE_KEY)) return;
@@ -198,11 +353,14 @@ export default function Schedule() {
       .finally(() => setLoading(false));
   }
 
+  // Exclude paused VAs and those without active contracts before any tab sees them
+  const activeVAs = vas.filter(isActiveScheduleVA);
+
   const TABS = [
-    { id: "main",  Icon: Users,        label: "Main Community"      },
-    { id: "cba",   Icon: Users,        label: "CBA Community"       },
-    { id: "by_va", Icon: CalendarDays, label: "By VA"               },
-    { id: "avail", Icon: Clock,        label: "Availability Finder" },
+    { id: "main",  Icon: Users,        label: "Agency"       },
+    { id: "cba",   Icon: Users,        label: "CBA"          },
+    { id: "by_va", Icon: CalendarDays, label: "By VA"        },
+    { id: "avail", Icon: Clock,        label: "Availability" },
   ];
 
   return (
@@ -212,51 +370,46 @@ export default function Schedule() {
       <TopBarProgress active={loading} />
       <TopBarCachedBanner cacheKey={CACHE_KEY} onRefresh={refresh} loading={loading} />
 
-      <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-        <Button
-          icon={Download}
-          variant="ghost"
-          onClick={() => downloadAvailability(apiFetch, setDownloading)}
-          disabled={downloading}
-          size="sm"
-        >
-          {downloading ? "Downloading…" : "Download Availability CSV"}
-        </Button>
-      </div>
-
       <TabBar tabs={TABS} active={activeTab} onChange={setActiveTab} />
 
       {loading && <ScheduleTableSkeleton />}
       {error && <StatusBox variant="danger">{error}</StatusBox>}
 
       {!loading && !error && (
-        <>
-          {activeTab === "main"  && <CommunityTab vas={vas.filter(v => v.community === "Main")} community="Main" />}
-          {activeTab === "cba"   && <CommunityTab vas={vas.filter(v => v.community === "CBA")}  community="CBA"  />}
-          {activeTab === "by_va" && <ByVATab      vas={vas} />}
-          {activeTab === "avail" && <AvailabilityFinder vas={vas.filter(v => v.community === "CBA")} />}
-        </>
+        <div key={activeTab} className="mt-schedule-fade">
+          {activeTab === "main"  && <CommunityTab vas={activeVAs.filter(v => v.community === "Main")} community="Main" />}
+          {activeTab === "cba"   && <CommunityTab vas={activeVAs.filter(v => v.community === "CBA")}  community="CBA"  />}
+          {activeTab === "by_va" && <ByVATab      vas={activeVAs} />}
+          {activeTab === "avail" && <AvailabilityFinder vas={activeVAs.filter(v => v.community === "CBA")} />}
+        </div>
       )}
     </div>
   );
 }
 
-// ── Community Tab ─────────────────────────────────────────────────
+// ── Community Tab ────────────────────────────────────────────────
 function CommunityTab({ vas, community }) {
-  const noShift  = vas.filter((v) => !v.has_shift_data && !v.is_flexible);
-  const withShift = vas.filter((v) =>  v.has_shift_data ||  v.is_flexible);
+  const [search,   setSearch]   = useState("");
+  const [hoverRow, setHoverRow] = useState(null);
+
+  const filteredVas = search
+    ? vas.filter(v => v.name.toLowerCase().includes(search.toLowerCase()))
+    : vas;
+
+  const noShift   = filteredVas.filter((v) => !v.has_shift_data && !v.is_flexible);
+  const withShift = filteredVas.filter((v) =>  v.has_shift_data ||  v.is_flexible);
 
   if (!vas.length) {
-    return <StatusBox variant="info">No active {community} VAs found.</StatusBox>;
+    return <StatusBox variant="info">No active {community === "Main" ? "Agency" : "CBA"} VAs found.</StatusBox>;
   }
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Legend */}
-      <div style={{ display: "flex", gap: 20, alignItems: "center", flexWrap: "wrap" }}>
+      {/* Legend + search */}
+      <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
         {[
-          { color: colors.teal,         label: "Main shift"        },
-          { color: colors.communityCBA, label: "CBA multi-client"  },
+          { color: colors.teal,         label: "Main shift"          },
+          { color: colors.communityCBA, label: "CBA multi-client"    },
           { color: colors.border,       label: "Off / Not scheduled" },
         ].map((l, i) => (
           <div key={i} style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -264,115 +417,159 @@ function CommunityTab({ vas, community }) {
             <span style={{ fontSize: font.sm, color: colors.textMuted }}>{l.label}</span>
           </div>
         ))}
-        <span style={{ fontSize: font.xs, color: colors.textFaint, marginLeft: "auto" }}>All times EST</span>
+
+        <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: font.xs, color: colors.textFaint }}>All times EST</span>
+          <div style={{ position: "relative", display: "flex", alignItems: "center" }}>
+            <Search size={14} style={{ position: "absolute", left: 10, color: colors.textFaint, pointerEvents: "none" }} />
+            <input
+              type="text"
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+              placeholder="Search VA…"
+              style={{
+                paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                fontSize: font.sm, fontFamily: font.family, outline: "none",
+                background: colors.surface, color: colors.textPrimary, width: 200,
+              }}
+              onFocus={e => e.target.style.borderColor = colors.teal}
+              onBlur={e  => e.target.style.borderColor = colors.border}
+            />
+          </div>
+        </div>
       </div>
+
+      {search && (
+        <div style={{
+          fontSize: font.xs, fontWeight: 700, color: colors.textMuted,
+          letterSpacing: "0.07em", textTransform: "uppercase",
+        }}>
+          {filteredVas.length} of {vas.length} VAs match "{search}"
+        </div>
+      )}
 
       {/* VA × Day table */}
       {withShift.length > 0 && (
-        <Card noPadding style={{ overflowX: "auto" }}>
+        <Card noPadding style={{ overflowX: "auto", borderRadius: TABLE_RADIUS }}>
           <table style={{ ...tableWrap, minWidth: 700 }}>
             <thead>
               <tr style={{ background: colors.navy }}>
-                <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>
-                  VA
-                </th>
+                <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>VA</th>
                 {DAYS.map((d) => (
                   <th key={d} style={{
                     ...ths,
                     background: (d === "Sat" || d === "Sun") ? "#0A1525" : colors.navy,
                     borderLeft: `1px solid ${colors.navyBorder}`,
-                  }}>
-                    {d}
-                  </th>
+                  }}>{d}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {withShift.map((va, rowIdx) => (
-                <tr key={va.name}>
-                  <td style={{
-                    ...tds,
-                    fontWeight:   600,
-                    paddingLeft:  20,
-                    borderRight:  `1px solid ${colors.border}`,
-                    whiteSpace:   "nowrap",
-                    background:   rowIdx % 2 === 0 ? colors.surface : colors.surfaceAlt,
-                    color:        colors.textPrimary,
-                  }}>
-                    <VANameLink name={va.name} />
-                  </td>
-                  {DAYS.map((day) => {
-                    const works     = va.schedule_days?.includes(day);
-                    const isWeekend = day === "Sat" || day === "Sun";
+              {withShift.map((va, rowIdx) => {
+                const baseBg = rowIdx % 2 === 0 ? colors.surface : colors.surfaceAlt;
+                const rowBg = hoverRow === rowIdx ? colors.tealLight : baseBg;
+                return (
+                  <tr
+                    key={va.name}
+                    onMouseEnter={() => setHoverRow(rowIdx)}
+                    onMouseLeave={() => setHoverRow(null)}
+                    style={{ transition: "background .12s" }}
+                  >
+                    <td style={{
+                      ...tds,
+                      fontWeight:  600,
+                      paddingLeft: 20,
+                      borderRight: `1px solid ${colors.border}`,
+                      whiteSpace:  "nowrap",
+                      background:  rowBg,
+                      color:       colors.textPrimary,
+                      transition:  "background .12s",
+                    }}>
+                      <VANameLink name={va.name} />
+                    </td>
+                    {DAYS.map((day) => {
+                      const works     = va.schedule_days?.includes(day);
+                      const isWeekend = day === "Sat" || day === "Sun";
 
-                    if (va.is_flexible && !isWeekend) {
+                      if (va.is_flexible && !isWeekend) {
+                        return (
+                          <td key={day} style={{
+                            ...tds, borderLeft: `1px solid ${colors.border}`,
+                            background: hoverRow === rowIdx ? colors.tealLight : colors.tealLight,
+                            padding: 6, textAlign: "center",
+                            transition: "background .12s",
+                          }}>
+                            <span style={{ fontSize: 10, fontWeight: 700, color: colors.teal }}>Flexible</span>
+                          </td>
+                        );
+                      }
+
+                      if (!works) {
+                        return (
+                          <td key={day} style={{
+                            ...tds, borderLeft: `1px solid ${colors.border}`,
+                            background: hoverRow === rowIdx
+                              ? colors.tealLight
+                              : (isWeekend ? "#F3F4F6" : baseBg),
+                            textAlign: "center", color: colors.border, fontSize: 16,
+                            transition: "background .12s",
+                          }}>—</td>
+                        );
+                      }
+
                       return (
                         <td key={day} style={{
-                          ...tds, borderLeft: `1px solid ${colors.border}`,
-                          background: colors.tealLight, padding: 6, textAlign: "center",
+                          ...tds,
+                          borderLeft:    `1px solid ${colors.border}`,
+                          padding:       6,
+                          verticalAlign: "top",
+                          background:    hoverRow === rowIdx ? colors.tealLight : "transparent",
+                          transition:    "background .12s",
                         }}>
-                          <span style={{ fontSize: 10, fontWeight: 700, color: colors.teal }}>Flexible</span>
+                          <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                            {va.shift_blocks.map((block, bi) => (
+                              <ShiftBlock key={bi} block={block} community={community} />
+                            ))}
+                          </div>
                         </td>
                       );
-                    }
-
-                    if (!works) {
-                      return (
-                        <td key={day} style={{
-                          ...tds, borderLeft: `1px solid ${colors.border}`,
-                          background: isWeekend ? "#F3F4F6" : (rowIdx % 2 === 0 ? colors.surface : colors.surfaceAlt),
-                          textAlign: "center", color: colors.border, fontSize: 16,
-                        }}>
-                          —
-                        </td>
-                      );
-                    }
-
-                    return (
-                      <td key={day} style={{
-                        ...tds,
-                        borderLeft:    `1px solid ${colors.border}`,
-                        padding:       6,
-                        verticalAlign: "top",
-                      }}>
-                        <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-                          {va.shift_blocks.map((block, bi) => (
-                            <ShiftBlock key={bi} block={block} community={community} />
-                          ))}
-                        </div>
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </Card>
       )}
 
-      {/* VAs with no shift data */}
+      {search && withShift.length === 0 && noShift.length === 0 && (
+        <StatusBox variant="info">No VAs matching "{search}".</StatusBox>
+      )}
+
       {noShift.length > 0 && (
         <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 10 }}>
-            <span style={{ fontSize: font.xs, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: "0.07em" }}>
-              ⚠ No Shift Time Set ({noShift.length})
-            </span>
+          <div style={{
+            fontSize: font.xs, fontWeight: 700, color: colors.warning,
+            letterSpacing: "0.07em", textTransform: "uppercase", marginBottom: 10,
+          }}>
+            ⚠ No Shift Time Set ({noShift.length})
           </div>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
             {noShift.map((va, i) => (
               <div key={i} style={{
                 display:      "flex",
                 alignItems:   "center",
-                gap:          8,
+                gap:          10,
                 background:   colors.surface,
                 border:       `1px dashed ${colors.warningBorder}`,
                 borderRadius: radius.md,
                 padding:      "8px 14px",
               }}>
-                <CommunityBadge community={va.community} />
+                <Avatar name={va.name} size={24} />
                 <VANameLink
                   name={va.name}
-                  style={{ fontSize: font.sm, fontWeight: 600, color: colors.textMuted }}
+                  style={{ fontSize: font.sm, fontWeight: 600, color: colors.textPrimary }}
                 />
                 <span style={{ fontSize: font.xs, color: colors.warning }}>Update in Notion</span>
               </div>
@@ -384,7 +581,7 @@ function CommunityTab({ vas, community }) {
   );
 }
 
-// ── ShiftBlock pill — shown inside each day cell ──────────────────
+// ── ShiftBlock pill — shown inside each day cell ─────────────────
 function ShiftBlock({ block, community }) {
   const isMulti   = !!block.label;
   const bg        = isMulti && community === "CBA" ? "#FEF3E2" : colors.tealLight;
@@ -411,35 +608,26 @@ function ShiftBlock({ block, community }) {
   );
 }
 
-function fmtShortTime(h, m) {
-  const ap  = h >= 12 ? "PM" : "AM";
-  const h12 = h % 12 || 12;
-  return m === 0 ? `${h12}${ap}` : `${h12}:${String(m).padStart(2, "0")}${ap}`;
-}
-
-// ── By VA Tab ─────────────────────────────────────────────────────
+// ── By VA Tab ────────────────────────────────────────────────────
 function ByVATab({ vas }) {
   const [selected, setSelected] = useState("");
   const va = vas.find((v) => v.name === selected) ?? null;
 
-  const groups = ["Main", "CBA"].flatMap((comm) => {
-    const group = vas.filter((v) => v.community === comm);
-    if (!group.length) return [];
-    return [{ label: `${comm} Community`, options: group.map((v) => ({ value: v.name, label: v.name })) }];
-  });
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <Card>
-        <Select
-          label="Select a VA"
-          placeholder="Choose a VA…"
+      <Card style={{ overflow: "visible" }}>
+        <VASearchSelect
+          vas={vas}
           value={selected}
-          onChange={(e) => setSelected(e.target.value)}
-          groups={groups}
-          style={{ maxWidth: 340 }}
+          onChange={setSelected}
+          placeholder={vas.length ? "Search or pick a VA…" : "VA list not loaded yet"}
         />
       </Card>
+
+      {!selected && (
+        <StatusBox variant="info">Search or pick a VA above to see their full weekly schedule.</StatusBox>
+      )}
+
       {va && <VAScheduleDetail va={va} />}
     </div>
   );
@@ -447,10 +635,9 @@ function ByVATab({ vas }) {
 
 function VAScheduleDetail({ va }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      {/* VA header */}
+    <div key={va.name} className="mt-schedule-fade" style={{ display: "flex", flexDirection: "column", gap: 20 }}>
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-        <Avatar name={va.name} size={52} />
+        <Avatar name={va.name} size={48} />
         <div>
           <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>
             <VANameLink name={va.name} />
@@ -463,9 +650,8 @@ function VAScheduleDetail({ va }) {
         </div>
       </div>
 
-      {/* Shift blocks */}
       {va.shift_blocks?.length > 0 ? (
-        <Card noPadding style={{ overflowX: "auto" }}>
+        <Card noPadding style={{ overflowX: "auto", borderRadius: TABLE_RADIUS }}>
           <table style={{ ...tableWrap, minWidth: 700 }}>
             <thead>
               <tr style={{ background: colors.navy }}>
@@ -523,7 +709,7 @@ function VAScheduleDetail({ va }) {
   );
 }
 
-// ── Availability Finder (CBA only) ────────────────────────────────
+// ── Availability Finder (CBA only) ───────────────────────────────
 function classifyVA(va, day, startH, startM, endH, endM) {
   if (va.is_flexible) return { status: "flexible", blocks: [] };
   if (!va.schedule_days?.includes(day)) return { status: "off", blocks: [] };
@@ -549,10 +735,11 @@ function classifyVA(va, day, startH, startM, endH, endM) {
 }
 
 function AvailabilityFinder({ vas }) {
-  const [startIdx, setStartIdx] = useState(6);
-  const [endIdx,   setEndIdx]   = useState(8);
-  const [day,      setDay]      = useState("Mon");
-  const [results,  setResults]  = useState(null);
+  const [startIdx, setStartIdx]   = useState(6);
+  const [endIdx,   setEndIdx]     = useState(8);
+  const [day,      setDay]        = useState("Mon");
+  const [results,  setResults]    = useState(null);
+  const [downloading, setDownloading] = useState(false);
 
   const start = TIME_OPTIONS[startIdx];
   const end   = TIME_OPTIONS[endIdx];
@@ -575,9 +762,23 @@ function AvailabilityFinder({ vas }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      <StatusBox variant="info">
-        Find CBA VAs available for a specific time window — useful when onboarding a new client.
-      </StatusBox>
+      <div style={{
+        display: "flex", alignItems: "flex-start", justifyContent: "space-between",
+        gap: 12, flexWrap: "wrap",
+      }}>
+        <StatusBox variant="info" style={{ flex: 1, minWidth: 280 }}>
+          Find CBA VAs available for a specific time window — useful when onboarding a new client.
+        </StatusBox>
+        <Button
+          icon={Download}
+          variant="ghost"
+          onClick={() => downloadAvailability(apiFetch, setDownloading)}
+          disabled={downloading}
+          size="sm"
+        >
+          {downloading ? "Downloading…" : "Download CSV"}
+        </Button>
+      </div>
 
       <ControlBar>
         <Select
@@ -612,7 +813,7 @@ function AvailabilityFinder({ vas }) {
       </ControlBar>
 
       {results && (
-        <>
+        <div className="mt-schedule-fade" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
           <div style={{ display: "flex", gap: 12, flexWrap: "wrap" }}>
             <SummaryPill count={available.length} label="Available"   color={colors.success} bg={colors.successLight} />
             <SummaryPill count={partial.length}   label="Partial"     color={colors.warning} bg={colors.warningLight} />
@@ -647,7 +848,7 @@ function AvailabilityFinder({ vas }) {
           {results.length === 0 && (
             <StatusBox variant="info">No CBA VAs found.</StatusBox>
           )}
-        </>
+        </div>
       )}
     </div>
   );
@@ -672,15 +873,22 @@ function ResultSection({ title, subtitle, items, headerBg, headerBorder }) {
       {items.map(({ va, status, blocks }, i) => {
         const cfg  = STATUS_CONFIG[status];
         const Icon = cfg.Icon;
+        const rowBg = i % 2 === 0 ? colors.surface : colors.surfaceAlt;
         return (
-          <div key={i} style={{
-            display:    "flex",
-            alignItems: "flex-start",
-            gap:        14,
-            padding:    "12px 20px",
-            borderTop:  i > 0 ? `1px solid ${colors.border}` : "none",
-            background: i % 2 === 0 ? colors.surface : colors.surfaceAlt,
-          }}>
+          <div
+            key={i}
+            style={{
+              display:    "flex",
+              alignItems: "flex-start",
+              gap:        14,
+              padding:    "12px 20px",
+              borderTop:  i > 0 ? `1px solid ${colors.border}` : "none",
+              background: rowBg,
+              transition: "background .12s",
+            }}
+            onMouseEnter={e => e.currentTarget.style.background = colors.tealLight}
+            onMouseLeave={e => e.currentTarget.style.background = rowBg}
+          >
             <Icon size={18} color={cfg.color} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1 }}>
               <div style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>

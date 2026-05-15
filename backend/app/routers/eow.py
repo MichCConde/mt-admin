@@ -8,6 +8,7 @@ from app.notion import (
     get_active_contracts_by_id,
     match_client_name,
     EST,
+    to_est,
 )
 from app.services.matching import (
     names_match, fuzzy_find_eod,
@@ -28,6 +29,9 @@ CLIENT_ISSUE_KEYWORDS = [
 
 
 def workdays_in_range(start: str, end: str) -> list[str]:
+    """Return all days in the range except Sundays.
+    Supports both Mon-Fri and Mon-Sat week shapes.
+    """
     result  = []
     current = datetime.strptime(start, "%Y-%m-%d").date()
     end_d   = datetime.strptime(end,   "%Y-%m-%d").date()
@@ -36,6 +40,7 @@ def workdays_in_range(start: str, end: str) -> list[str]:
             result.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
     return result
+
 
 def detect_keyword_flags(text: str) -> list[str]:
     if not text:
@@ -114,12 +119,48 @@ def _find_va_eod_for_client(va_eod_list: list, client_name: str):
     return None
 
 
+def _format_clock_in_est(attendance_record: dict) -> str | None:
+    """
+    Convert an attendance record's created_time (UTC) to an EST clock-in
+    string like "9:05 AM EST". Mirrors what clock_in_punctuality() does.
+    """
+    if not attendance_record:
+        return None
+    created_at = attendance_record.get("created_time")
+    if not created_at:
+        return None
+    try:
+        return to_est(created_at).strftime("%I:%M %p EST")
+    except Exception:
+        return None
+
+
+def _extract_va_hours_daily(contract: dict) -> float | None:
+    """
+    Pull the "VA Hours (Daily)" property from a contract.
+    Falls back through common field names in case the mapper used a different one.
+    """
+    if not contract:
+        return None
+    value = (
+        contract.get("va_hours_daily")
+        or contract.get("hours_daily")
+        or contract.get("daily_hours")
+    )
+    if value is None or value == "":
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 # ── Route ─────────────────────────────────────────────────────────
 
 @router.get("")
 def get_eow_report(
     start: str = Query(..., description="YYYY-MM-DD — Monday of the week"),
-    end:   str = Query(..., description="YYYY-MM-DD — Saturday of the week"),
+    end:   str = Query(..., description="YYYY-MM-DD — Friday or Saturday of the week"),
 ):
     try:
         vas              = get_active_vas()
@@ -138,7 +179,6 @@ def get_eow_report(
             va_last   = full_key.split()[-1]
             community = va.get("community", "")
 
-            # Resolve contracts from VA's own relation (same as /report)
             active_contracts = [
                 contracts_by_id[cid]
                 for cid in va.get("contract_ids", [])
@@ -146,7 +186,6 @@ def get_eow_report(
             ]
             non_pb_contracts = [c for c in active_contracts if not is_project_based_contract(c)]
 
-            # Skip any VA without active billable contracts
             if not non_pb_contracts:
                 continue
 
@@ -156,7 +195,6 @@ def get_eow_report(
             for d in workdays:
                 att = week_attendance[d]
 
-                # Match attendance by full_name with last_name fallback
                 va_clockins = [
                     a for a in att
                     if a["full_name"] == full_key or a["last_name"] == va_last
@@ -166,22 +204,21 @@ def get_eow_report(
                     a.get("notes", "") for a in va_clockins
                 )
 
-                # Get this VA's EOD records for the day (fuzzy name match)
                 eod_source = week_eod_main[d] if community == "Main" else week_eod_cba[d]
                 va_day_eod = _find_va_eod_for_day(eod_source, full_key)
 
-                # One entry per non-project-based contract per day
                 for con in non_pb_contracts:
                     con_client = con["client_name"]
+                    expected_daily_hours = _extract_va_hours_daily(con)
 
-                    # Per-contract EOD (fuzzy) — done first so eod_needs_v is defined
                     con_eod, eod_needs_v = fuzzy_find_eod(va_day_eod, con_client)
                     reports = [con_eod] if con_eod else []
                     va_all_eod.extend(reports)
 
-                    # Per-contract clock-in (fuzzy)
+                    # Per-contract clock-in match — capture the actual record
                     contract_clocked_in = False
-                    needs_verification  = eod_needs_v  # start with EOD's verification flag
+                    needs_verification  = eod_needs_v
+                    matched_clockin     = None
                     for ci in va_clockins:
                         is_match, needs_v = match_client_name(
                             ci.get("client", ""), con_client
@@ -189,11 +226,14 @@ def get_eow_report(
                         if is_match:
                             contract_clocked_in = True
                             needs_verification = needs_verification or needs_v
+                            matched_clockin = ci
                             break
 
                     daily.append({
                         "date":               d,
                         "clocked_in":         contract_clocked_in,
+                        "clock_in_est":       _format_clock_in_est(matched_clockin),
+                        "expected_hours":     expected_daily_hours,
                         "eod_submitted":      len(reports) > 0,
                         "reports":            reports,
                         "keyword_flags":      list(set(detect_keyword_flags(clock_notes))),
@@ -250,7 +290,7 @@ def get_eow_report(
             "start":        start,
             "end":          end,
             "workdays":     workdays,
-            "total_vas":    len(va_summaries),  # ← reflects VAs with active billable contracts only
+            "total_vas":    len(va_summaries),
             "va_summaries": va_summaries,
             "flags":        all_flags,
             "totals": {

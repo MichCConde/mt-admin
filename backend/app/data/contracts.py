@@ -14,12 +14,11 @@ def _build_contract(page: dict) -> dict:
         "end_shift":            get_prop(page, "Shift End"),
         "package":              get_prop(page, "Package"),
         "is_project_based":     get_prop(page, "Package") == "Project-based",
-
-        # Fields used by /api/dashboard weekly metrics
         "status":               get_prop(page, "Contract Status"),
         "start_date":           get_prop(page, "Start Date"),
         "paused_date":          get_prop(page, "Paused Date"),
         "end_date":             get_prop(page, "End Date"),
+        "va_hours_daily":       get_prop(page, "VA Hours (Daily)"),
     }
 
 
