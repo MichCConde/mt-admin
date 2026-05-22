@@ -14,7 +14,7 @@ from datetime import date
 
 from app.notion import get_active_vas, get_eod_for_va, match_client_name
 from app.data.contracts import get_active_contracts_by_id
-from app.data import get_all_clients, _norm_id
+from app.notion import get_all_clients, _norm_id
 from app.services.ai import generate_with_cache
 from app.services.eom_prompts import SYSTEM_PROMPT, build_user_prompt
 from app.services.eom_publisher import create_eom_report_page
