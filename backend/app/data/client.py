@@ -102,7 +102,7 @@ def parse_time_str(time_str: str):
 # ── Clients directory (NEW) ───────────────────────────────────────
 # Used by EOM report generation to look up Company + Email by client ID.
 
-def _norm_id(s: str) -> str:
+def norm_id(s: str) -> str:
     """Normalize a Notion page ID (strip hyphens, lowercase) for stable lookups."""
     return (s or "").replace("-", "").lower()
 
@@ -112,13 +112,13 @@ def get_all_clients() -> dict:
     Return every page in the Clients DB as {normalized_id: {id, name, email, company}}.
 
     Keys are no-hyphen lowercase IDs so lookups work regardless of which
-    format Notion returns for a given relation. Call _norm_id() on the
+    format Notion returns for a given relation. Call norm_id() on the
     client ID you're looking up before indexing into this dict.
     """
     pages = query_all(DB["clients"], None)
     out = {}
     for p in pages:
-        out[_norm_id(p["id"])] = {
+        out[norm_id(p["id"])] = {
             "id":      p["id"],
             "name":    str(get_prop(p, "Name") or "").strip(),
             "email":   str(get_prop(p, "Email") or "").strip(),
