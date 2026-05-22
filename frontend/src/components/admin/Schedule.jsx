@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from "react";
-import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, Download, ChevronDown } from "lucide-react";
+import { CalendarDays, Users, Clock, Search, CheckCircle2, XCircle, MinusCircle, Download, ChevronDown, UserPlus } from "lucide-react";
 import { cacheGet, cacheSet, cacheClear, cacheTimeLeft, CACHE_KEYS } from "../../utils/reportCache";
 import { colors, font, radius }  from "../../styles/tokens";
 import { apiFetch }              from "../../api";
@@ -15,9 +15,8 @@ import { Skeleton } from "../ui/Skeleton";
 
 const DAYS     = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const DAY_FULL = { Mon: "Monday", Tue: "Tuesday", Wed: "Wednesday", Thu: "Thursday", Fri: "Friday", Sat: "Saturday", Sun: "Sunday" };
-const HOURS    = Array.from({ length: 17 }, (_, i) => i + 6); // 6 AM → 10 PM
+const HOURS    = Array.from({ length: 17 }, (_, i) => i + 6);
 
-// Square-ish corners for the schedule grids
 const TABLE_RADIUS = 4;
 
 // ── Inject animation styles once ─────────────────────────────────
@@ -34,20 +33,73 @@ if (typeof document !== "undefined" && !document.getElementById("mt-schedule-sty
   document.head.appendChild(tag);
 }
 
-// ── Filter: only schedule VAs that are active AND have a contract ─
-function isActiveScheduleVA(va) {
-  // Exclude paused / inactive (check multiple common field shapes)
-  const status = String(va.status ?? va.va_status ?? "").toLowerCase();
-  if (status === "paused" || status === "pause" || status === "inactive") return false;
-  if (va.is_paused === true || va.paused === true) return false;
+// ── Status classification ────────────────────────────────────────
+function getStatusCategory(va) {
+  if (va.is_paused === true || va.paused === true) return "paused";
 
-  // Exclude VAs with no active contracts
-  if (va.has_active_contract === false) return false;
-  if (Array.isArray(va.active_contracts) && va.active_contracts.length === 0) return false;
-  if (Array.isArray(va.contracts)        && va.contracts.length === 0)        return false;
-  if (Array.isArray(va.contract_ids)     && va.contract_ids.length === 0)     return false;
+  const status = String(va.status ?? va.va_status ?? "").toLowerCase().trim();
 
-  return true;
+  if (!status || status === "active") return "active";
+
+  const pausedAliases = ["paused", "pause", "on pause", "on_pause", "on hold", "on_hold"];
+  if (pausedAliases.includes(status)) return "paused";
+
+  return "excluded";
+}
+
+function isShowable(va) {
+  return getStatusCategory(va) !== "excluded";
+}
+
+function isPaused(va) {
+  return getStatusCategory(va) === "paused";
+}
+
+function hasNoActiveContract(va) {
+  if (va.has_active_contract === false) return true;
+  if (Array.isArray(va.active_contracts) && va.active_contracts.length === 0) return true;
+  if (Array.isArray(va.contracts)        && va.contracts.length === 0)        return true;
+  if (Array.isArray(va.contract_ids)     && va.contract_ids.length === 0)     return true;
+  return false;
+}
+
+function isDeploymentCandidate(va) {
+  // Used by AvailabilityFinder sort — anyone open for new work
+  return isPaused(va) || hasNoActiveContract(va);
+}
+
+// ── Paused badge — small inline tag ──────────────────────────────
+function PausedBadge({ va }) {
+  if (!isPaused(va)) return null;
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700,
+      color: colors.warning, background: colors.warningLight,
+      border: `1px solid ${colors.warningBorder}`,
+      padding: "1px 7px", borderRadius: radius.sm,
+      textTransform: "uppercase", letterSpacing: "0.04em",
+      whiteSpace: "nowrap",
+    }}>Paused</span>
+  );
+}
+
+// ── Status badge — shows Active OR Paused (used in No Contract tab) ──
+function VAStatusBadge({ va }) {
+  const category = getStatusCategory(va);
+  const cfg = category === "paused"
+    ? { label: "Paused", color: colors.warning, bg: colors.warningLight, border: colors.warningBorder }
+    : { label: "Active", color: colors.success, bg: colors.successLight, border: colors.successBorder };
+
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700,
+      color: cfg.color, background: cfg.bg,
+      border: `1px solid ${cfg.border}`,
+      padding: "2px 9px", borderRadius: radius.sm,
+      textTransform: "uppercase", letterSpacing: "0.04em",
+      whiteSpace: "nowrap",
+    }}>{cfg.label}</span>
+  );
 }
 
 function fmtHour(h) {
@@ -203,6 +255,7 @@ function VASearchSelect({ vas, value, onChange, placeholder = "Search VA name…
                     <Avatar name={v.name} size={28} />
                     <span style={{ flex: 1 }}>{v.name}</span>
                     <CommunityBadge community={v.community} />
+                    <PausedBadge va={v} />
                   </button>
                 );
               })}
@@ -353,14 +406,14 @@ export default function Schedule() {
       .finally(() => setLoading(false));
   }
 
-  // Exclude paused VAs and those without active contracts before any tab sees them
-  const activeVAs = vas.filter(isActiveScheduleVA);
+  const showableVAs = vas.filter(isShowable);
 
   const TABS = [
-    { id: "main",  Icon: Users,        label: "Agency"       },
-    { id: "cba",   Icon: Users,        label: "CBA"          },
-    { id: "by_va", Icon: CalendarDays, label: "By VA"        },
-    { id: "avail", Icon: Clock,        label: "Availability" },
+    { id: "main",        Icon: Users,        label: "Agency"          },
+    { id: "cba",         Icon: Users,        label: "CBA"             },
+    { id: "by_va",       Icon: CalendarDays, label: "By VA"           },
+    { id: "avail",       Icon: Clock,        label: "Availability"    },
+    { id: "no_contract", Icon: UserPlus,     label: "No Contract VAs" },
   ];
 
   return (
@@ -377,11 +430,149 @@ export default function Schedule() {
 
       {!loading && !error && (
         <div key={activeTab} className="mt-schedule-fade">
-          {activeTab === "main"  && <CommunityTab vas={activeVAs.filter(v => v.community === "Main")} community="Main" />}
-          {activeTab === "cba"   && <CommunityTab vas={activeVAs.filter(v => v.community === "CBA")}  community="CBA"  />}
-          {activeTab === "by_va" && <ByVATab      vas={activeVAs} />}
-          {activeTab === "avail" && <AvailabilityFinder vas={activeVAs.filter(v => v.community === "CBA")} />}
+          {activeTab === "main"        && <CommunityTab vas={showableVAs.filter(v => v.community === "Main")} community="Main" />}
+          {activeTab === "cba"         && <CommunityTab vas={showableVAs.filter(v => v.community === "CBA")}  community="CBA"  />}
+          {activeTab === "by_va"       && <ByVATab      vas={showableVAs} />}
+          {activeTab === "avail"       && <AvailabilityFinder vas={showableVAs.filter(v => v.community === "CBA")} />}
+          {activeTab === "no_contract" && <NoContractTab vas={showableVAs} />}
         </div>
+      )}
+    </div>
+  );
+}
+
+// ── No Contract VAs Tab ──────────────────────────────────────────
+function NoContractTab({ vas }) {
+  const [search, setSearch] = useState("");
+
+  const noContractVAs = vas.filter(hasNoActiveContract);
+
+  const searched = search
+    ? noContractVAs.filter(v => v.name.toLowerCase().includes(search.toLowerCase()))
+    : noContractVAs;
+
+  const sorted = [...searched].sort((a, b) => {
+    if (a.community !== b.community) return a.community.localeCompare(b.community);
+    const aPaused = isPaused(a);
+    const bPaused = isPaused(b);
+    if (aPaused !== bPaused) return aPaused ? 1 : -1;
+    return a.name.localeCompare(b.name);
+  });
+
+  const activeCount = noContractVAs.filter(v => !isPaused(v)).length;
+  const pausedCount = noContractVAs.filter(v =>  isPaused(v)).length;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <StatusBox variant="info">
+        VAs from the Agency and CBA communities who are <strong>Active</strong> or <strong>Paused</strong> in the VA Database but currently have no active contracts. These are deployment candidates for new client assignments.
+      </StatusBox>
+
+      {noContractVAs.length === 0 ? (
+        <StatusBox variant="success">
+          All Active and Paused VAs currently have active contracts. 🎉
+        </StatusBox>
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+            <div style={{ fontSize: font.sm, color: colors.textMuted }}>
+              <strong style={{ color: colors.textPrimary, fontSize: font.base }}>{noContractVAs.length}</strong>
+              {" VA"}{noContractVAs.length !== 1 ? "s" : ""}
+              {" without active contracts — "}
+              <span style={{ color: colors.success, fontWeight: 700 }}>{activeCount} Active</span>
+              {", "}
+              <span style={{ color: colors.warning, fontWeight: 700 }}>{pausedCount} Paused</span>
+            </div>
+
+            <div style={{ marginLeft: "auto", position: "relative", display: "flex", alignItems: "center" }}>
+              <Search size={14} style={{
+                position: "absolute", left: 10,
+                color: colors.textFaint, pointerEvents: "none",
+              }} />
+              <input
+                type="text"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder="Search VA…"
+                style={{
+                  paddingLeft: 30, paddingRight: 12, paddingTop: 7, paddingBottom: 7,
+                  border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
+                  fontSize: font.sm, fontFamily: font.family, outline: "none",
+                  background: colors.surface, color: colors.textPrimary, width: 240,
+                }}
+                onFocus={e => e.target.style.borderColor = colors.teal}
+                onBlur={e  => e.target.style.borderColor = colors.border}
+              />
+            </div>
+          </div>
+
+          {sorted.length === 0 ? (
+            <StatusBox variant="info">No VAs match "{search}".</StatusBox>
+          ) : (
+            <Card noPadding style={{ overflowX: "auto", borderRadius: TABLE_RADIUS }}>
+              <table style={{ ...tableWrap, minWidth: 700 }}>
+                <thead>
+                  <tr style={{ background: colors.navy }}>
+                    <th style={{ ...ths, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>VA Name</th>
+                    <th style={{ ...ths, textAlign: "center", width: 110, borderLeft: `1px solid ${colors.navyBorder}` }}>Community</th>
+                    <th style={{ ...ths, textAlign: "center", width: 100, borderLeft: `1px solid ${colors.navyBorder}` }}>Status</th>
+                    <th style={{ ...ths, textAlign: "left", borderLeft: `1px solid ${colors.navyBorder}` }}>Schedule</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {sorted.map((va, i) => {
+                    const rowBg = i % 2 === 0 ? colors.surface : colors.surfaceAlt;
+                    const scheduleText = va.is_flexible
+                      ? "Flexible — check directly"
+                      : (va.schedule || "No schedule set");
+                    const hasScheduleText = va.is_flexible || !!va.schedule;
+                    return (
+                      <tr
+                        key={va.name}
+                        style={{ background: rowBg, transition: "background .12s" }}
+                        onMouseEnter={e => e.currentTarget.style.background = colors.tealLight}
+                        onMouseLeave={e => e.currentTarget.style.background = rowBg}
+                      >
+                        <td style={{
+                          ...tds, paddingLeft: 20,
+                          borderRight: `1px solid ${colors.border}`,
+                          whiteSpace: "nowrap",
+                        }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                            <Avatar name={va.name} size={32} />
+                            <span style={{ fontWeight: 600, color: colors.textPrimary }}>
+                              <VANameLink name={va.name} />
+                            </span>
+                          </div>
+                        </td>
+                        <td style={{
+                          ...tds, textAlign: "center",
+                          borderLeft: `1px solid ${colors.border}`,
+                        }}>
+                          <CommunityBadge community={va.community} />
+                        </td>
+                        <td style={{
+                          ...tds, textAlign: "center",
+                          borderLeft: `1px solid ${colors.border}`,
+                        }}>
+                          <VAStatusBadge va={va} />
+                        </td>
+                        <td style={{
+                          ...tds,
+                          borderLeft: `1px solid ${colors.border}`,
+                          color: hasScheduleText ? colors.textBody : colors.textFaint,
+                          fontStyle: hasScheduleText ? "normal" : "italic",
+                        }}>
+                          {scheduleText}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </Card>
+          )}
+        </>
       )}
     </div>
   );
@@ -396,12 +587,18 @@ function CommunityTab({ vas, community }) {
     ? vas.filter(v => v.name.toLowerCase().includes(search.toLowerCase()))
     : vas;
 
-  const noShift   = filteredVas.filter((v) => !v.has_shift_data && !v.is_flexible);
-  const withShift = filteredVas.filter((v) =>  v.has_shift_data ||  v.is_flexible);
+  // No-contract VAs now live in their own tab — exclude them here so the
+  // Community tabs only show VAs with active client work
+  const withContract = filteredVas.filter(v => !hasNoActiveContract(v));
+  const noShift      = withContract.filter(v => !v.has_shift_data && !v.is_flexible);
+  const withShift    = withContract.filter(v =>  v.has_shift_data ||  v.is_flexible);
 
   if (!vas.length) {
-    return <StatusBox variant="info">No active {community === "Main" ? "Agency" : "CBA"} VAs found.</StatusBox>;
+    return <StatusBox variant="info">No active or paused {community === "Main" ? "Agency" : "CBA"} VAs found.</StatusBox>;
   }
+
+  const nothingMatched = search && withShift.length === 0 && noShift.length === 0;
+  const allInNoContractTab = !search && withContract.length === 0;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
@@ -449,13 +646,19 @@ function CommunityTab({ vas, community }) {
         </div>
       )}
 
-      {/* VA × Day table */}
+      {allInNoContractTab && (
+        <StatusBox variant="info">
+          All {community === "Main" ? "Agency" : "CBA"} VAs are currently without active contracts. See the "No Contract VAs" tab.
+        </StatusBox>
+      )}
+
+      {/* ── Main VA × Day grid ───────────────────────────────── */}
       {withShift.length > 0 && (
         <Card noPadding style={{ overflowX: "auto", borderRadius: TABLE_RADIUS }}>
           <table style={{ ...tableWrap, minWidth: 700 }}>
             <thead>
               <tr style={{ background: colors.navy }}>
-                <th style={{ ...ths, width: 180, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>VA</th>
+                <th style={{ ...ths, width: 220, textAlign: "left", paddingLeft: 20, borderRight: `1px solid ${colors.navyBorder}` }}>VA</th>
                 {DAYS.map((d) => (
                   <th key={d} style={{
                     ...ths,
@@ -486,7 +689,10 @@ function CommunityTab({ vas, community }) {
                       color:       colors.textPrimary,
                       transition:  "background .12s",
                     }}>
-                      <VANameLink name={va.name} />
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <VANameLink name={va.name} />
+                        <PausedBadge va={va} />
+                      </div>
                     </td>
                     {DAYS.map((day) => {
                       const works     = va.schedule_days?.includes(day);
@@ -543,10 +749,11 @@ function CommunityTab({ vas, community }) {
         </Card>
       )}
 
-      {search && withShift.length === 0 && noShift.length === 0 && (
+      {nothingMatched && (
         <StatusBox variant="info">No VAs matching "{search}".</StatusBox>
       )}
 
+      {/* ── No Shift Time Set warning section ────────────────── */}
       {noShift.length > 0 && (
         <div>
           <div style={{
@@ -571,6 +778,7 @@ function CommunityTab({ vas, community }) {
                   name={va.name}
                   style={{ fontSize: font.sm, fontWeight: 600, color: colors.textPrimary }}
                 />
+                <PausedBadge va={va} />
                 <span style={{ fontSize: font.xs, color: colors.warning }}>Update in Notion</span>
               </div>
             ))}
@@ -642,8 +850,19 @@ function VAScheduleDetail({ va }) {
           <div style={{ fontSize: font.h3, fontWeight: 800, color: colors.textPrimary }}>
             <VANameLink name={va.name} />
           </div>
-          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4 }}>
+          <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 4, flexWrap: "wrap" }}>
             <CommunityBadge community={va.community} />
+            <PausedBadge va={va} />
+            {hasNoActiveContract(va) && (
+              <span style={{
+                fontSize: 10, fontWeight: 700,
+                color: colors.info, background: colors.infoLight,
+                border: `1px solid ${colors.infoBorder}`,
+                padding: "1px 7px", borderRadius: radius.sm,
+                textTransform: "uppercase", letterSpacing: "0.04em",
+                whiteSpace: "nowrap",
+              }}>No Active Contract</span>
+            )}
             <span style={{ fontSize: font.sm, color: colors.textMuted }}>{va.schedule || "No schedule set"}</span>
             <span style={{ fontSize: font.xs, color: colors.textFaint }}>· All times EST</span>
           </div>
@@ -751,8 +970,18 @@ function AvailabilityFinder({ vas }) {
       va,
       ...classifyVA(va, day, start.h, start.m, end.h, end.m),
     }));
+    // Sort: available/flexible first, with deployment candidates prioritized
+    // within "available" since they're prime targets for new clients
     const ORDER = { available: 0, flexible: 1, partial: 2, unavailable: 3, off: 4, no_data: 5 };
-    classified.sort((a, b) => (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9));
+    classified.sort((a, b) => {
+      const orderDiff = (ORDER[a.status] ?? 9) - (ORDER[b.status] ?? 9);
+      if (orderDiff !== 0) return orderDiff;
+      const aCandidate = isDeploymentCandidate(a.va);
+      const bCandidate = isDeploymentCandidate(b.va);
+      if (aCandidate && !bCandidate) return -1;
+      if (!aCandidate && bCandidate) return 1;
+      return 0;
+    });
     setResults(classified);
   }
 
@@ -767,7 +996,7 @@ function AvailabilityFinder({ vas }) {
         gap: 12, flexWrap: "wrap",
       }}>
         <StatusBox variant="info" style={{ flex: 1, minWidth: 280 }}>
-          Find CBA VAs available for a specific time window — useful when onboarding a new client.
+          Find CBA VAs available for a specific time window. Paused VAs and VAs with no current contracts are included and prioritized as deployment candidates.
         </StatusBox>
         <Button
           icon={Download}
@@ -891,8 +1120,20 @@ function ResultSection({ title, subtitle, items, headerBg, headerBorder }) {
           >
             <Icon size={18} color={cfg.color} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
             <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>
-                <VANameLink name={va.name} />
+              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, fontSize: font.base, color: colors.textPrimary }}>
+                  <VANameLink name={va.name} />
+                </span>
+                <PausedBadge va={va} />
+                {hasNoActiveContract(va) && (
+                  <span style={{
+                    fontSize: 10, fontWeight: 700,
+                    color: colors.info, background: colors.infoLight,
+                    border: `1px solid ${colors.infoBorder}`,
+                    padding: "1px 7px", borderRadius: radius.sm,
+                    textTransform: "uppercase", letterSpacing: "0.04em",
+                  }}>No Contract</span>
+                )}
               </div>
               <div style={{ marginTop: 4, display: "flex", flexWrap: "wrap", gap: 6 }}>
                 {va.shift_blocks?.length > 0

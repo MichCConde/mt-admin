@@ -48,7 +48,7 @@ def _build_va_shift_blocks(va: dict, contracts_by_id: dict) -> list[dict]:
 def get_schedule():
     """Returns all active VAs with shift blocks built from their contracts."""
     try:
-        vas             = get_active_vas()
+        vas             = get_active_vas(include_paused=True)
         contracts_by_id = get_active_contracts_by_id()
 
         enriched = []
@@ -113,7 +113,7 @@ def _get_available_slots(shift_blocks: list, slot_defs: list) -> list[str]:
 def get_availability():
     """CBA VAs with open slots — powered exclusively by contract-level shift blocks."""
     try:
-        vas             = get_active_vas()
+        vas             = get_active_vas(include_paused=True)
         contracts_by_id = get_active_contracts_by_id()
 
         va_list = []

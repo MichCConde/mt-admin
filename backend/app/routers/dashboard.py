@@ -161,25 +161,43 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
 
 # ── Weekly activity computation ───────────────────────────────────
 
-def _compute_contract_metrics(all_contracts: list, today: date) -> dict:
+def _compute_contract_metrics(all_contracts: list, vas: list, today: date) -> dict:
     """
     Computes contract-related stats for the Dashboard.
 
-    Returns:
-      - paused_contracts:     total count of contracts with status=Paused (all-time)
-      - new_onboardings:      contracts with Start Date in [last_week_mon, today]
-      - upcoming_onboardings: contracts with status=Draft AND Start Date in (today, this_week_sun]
-      - total_paused:         contracts with status=Paused AND Paused Date in [this_week_mon, this_week_sun]
-      - total_ended:          contracts with status=Ended AND End Date in [this_week_mon, this_week_sun]
+    Returns both counts (for the stat boxes) AND the underlying contract
+    items per category (for the click-through detail modals).
+
+    All categories are scoped to the CURRENT WEEK (Mon → Sun):
+      - paused_contracts:     ALL contracts with status=Paused (all-time, top-level KPI)
+      - new_onboardings:      Start Date in [this_mon, today] — already happened this week
+      - upcoming_onboardings: status in (Draft, Rescheduled) AND Start Date in (today, this_sun]
+      - total_paused:         status=Paused AND Paused Date in [this_mon, this_sun]
+      - total_ended:          status=Ended AND End Date in [this_mon, this_sun]
     """
     this_mon, this_sun = _week_range(today)
-    last_mon = this_mon - timedelta(days=7)
 
-    paused_total      = 0
-    new_onboardings   = 0
-    upcoming_onboard  = 0
-    total_paused_wk   = 0
-    total_ended_wk    = 0
+    # Build contract_id → VA reverse lookup so we can enrich each contract
+    # item with VA name and community. Uses the wider Active+Paused VA
+    # list so contracts belonging to paused VAs still resolve.
+    va_by_contract_id = {}
+    for va in vas:
+        for cid in va.get("contract_ids", []) or []:
+            va_by_contract_id[cid] = va
+
+    def _make_item(c: dict, date_value) -> dict:
+        cid = c.get("id")
+        va = va_by_contract_id.get(cid) or {}
+        return {
+            "va_name":     va.get("name") or c.get("va_name") or "Unknown VA",
+            "client":      c.get("client_name") or c.get("client") or "—",
+            "community":   va.get("community") or "—",
+            "date":        date_value.isoformat() if date_value else None,
+            "contract_id": cid,
+        }
+
+    paused_total = 0
+    new_items, upcoming_items, paused_items, ended_items = [], [], [], []
 
     for c in all_contracts:
         status      = c.get("status")
@@ -187,33 +205,49 @@ def _compute_contract_metrics(all_contracts: list, today: date) -> dict:
         paused_date = _parse_date(c.get("paused_date"))
         end_date    = _parse_date(c.get("end_date"))
 
-        # Top-row "Paused Contracts" (all-time)
+        # Top-row "Paused Contracts" (all-time count, not weekly-scoped)
         if status == "Paused":
             paused_total += 1
 
-        # New onboardings: Start Date in [last week Monday, today]
-        if start_date and last_mon <= start_date <= today:
-            new_onboardings += 1
+        # New onboardings: Start Date already happened this week
+        # (this Monday → today, ANY status)
+        if start_date and this_mon <= start_date <= today:
+            new_items.append(_make_item(c, start_date))
 
-        # Upcoming onboardings: Draft AND Start Date is upcoming this week
-        if status == "Draft" and start_date and today < start_date <= this_sun:
-            upcoming_onboard += 1
+        # Upcoming onboardings: Draft or Rescheduled AND Start Date in
+        # the future but still within this week (tomorrow → this Sunday)
+        if (
+            status in ("Draft", "Rescheduled")
+            and start_date
+            and today < start_date <= this_sun
+        ):
+            upcoming_items.append(_make_item(c, start_date))
 
-        # Recently paused this week
+        # Paused this week: Paused status with Paused Date in this week
         if status == "Paused" and paused_date and this_mon <= paused_date <= this_sun:
-            total_paused_wk += 1
+            paused_items.append(_make_item(c, paused_date))
 
-        # Recently ended this week
+        # Ended this week: Ended status with End Date in this week
         if status == "Ended" and end_date and this_mon <= end_date <= this_sun:
-            total_ended_wk += 1
+            ended_items.append(_make_item(c, end_date))
+
+    # Sort each list by date descending (most recent first)
+    for items in (new_items, upcoming_items, paused_items, ended_items):
+        items.sort(key=lambda x: x.get("date") or "", reverse=True)
 
     return {
         "paused_contracts": paused_total,
         "weekly_activity": {
-            "new_onboardings":      new_onboardings,
-            "upcoming_onboardings": upcoming_onboard,
-            "total_paused":         total_paused_wk,
-            "total_ended":          total_ended_wk,
+            "new_onboardings":      len(new_items),
+            "upcoming_onboardings": len(upcoming_items),
+            "total_paused":         len(paused_items),
+            "total_ended":          len(ended_items),
+        },
+        "weekly_activity_items": {
+            "new_onboardings":      new_items,
+            "upcoming_onboardings": upcoming_items,
+            "total_paused":         paused_items,
+            "total_ended":          ended_items,
         },
     }
 
@@ -226,6 +260,10 @@ def get_dashboard():
         now   = datetime.now(tz=EST)
         today = now.date()
         vas   = get_active_vas_cached()
+        # Wider VA list (Active + Paused) used only for enriching contract
+        # items with VA name and community. Top-level counts and activity
+        # feed still use the Active-only list above.
+        team_vas = get_active_vas_cached(include_paused=True)
 
         contracts_by_va     = get_all_active_contracts_by_va_id()
         active_contract_ids = get_active_contract_id_set()
@@ -239,8 +277,8 @@ def get_dashboard():
             if not any(cid in active_contract_ids for cid in v.get("contract_ids", []))
         ]
 
-        # Contract-based metrics (paused total + weekly activity)
-        contract_metrics = _compute_contract_metrics(all_contracts, today)
+        # Contract-based metrics (paused total + weekly activity + items)
+        contract_metrics = _compute_contract_metrics(all_contracts, team_vas, today)
 
         # Today's activity feed
         today_str = now.strftime("%Y-%m-%d")
@@ -264,9 +302,10 @@ def get_dashboard():
                 "no_contract":      len(no_contract_vas),
                 "paused_contracts": contract_metrics["paused_contracts"],
             },
-            "weekly_activity": contract_metrics["weekly_activity"],
-            "activity_feed":   activity_feed,
-            "activity_date":   today_str,
+            "weekly_activity":       contract_metrics["weekly_activity"],
+            "weekly_activity_items": contract_metrics["weekly_activity_items"],
+            "activity_feed":         activity_feed,
+            "activity_date":         today_str,
             "missing": {
                 "date":          yesterday,
                 "count":         len(missing_yesterday),

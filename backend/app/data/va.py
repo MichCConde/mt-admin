@@ -4,12 +4,16 @@ from app.notion import *
 
 # ── VA Database ───────────────────────────────────────────────────
 
-ACTIVE_STATUSES     = {"Active"}
-ACTIVE_EMP_STATUSES = {"Employee"}
-ALLOWED_TEAMS       = {"VA Team"}
-EXCLUDED_TEAMS      = {"Internal", "Project Based"}
+ACTIVE_STATUSES       = {"Active"}
+SCHEDULABLE_STATUSES  = {"Active", "Paused"}
+ACTIVE_EMP_STATUSES   = {"Employee"}
+ALLOWED_TEAMS         = {"VA Team"}
+EXCLUDED_TEAMS        = {"Internal", "Project Based"}
 
-_va_cache = {"data": None, "expires": 0.0}
+_va_cache = {
+    "active":             {"data": None, "expires": 0.0},
+    "active_and_paused":  {"data": None, "expires": 0.0},
+}
 
 
 def _extract_rollup_phone(page: dict, prop_name: str = "Phone") -> Optional[str]:
@@ -56,21 +60,52 @@ def _extract_rollup_phone(page: dict, prop_name: str = "Phone") -> Optional[str]
     return None
 
 
-def get_active_vas_cached() -> list:
+def get_active_vas_cached(include_paused: bool = False) -> list:
+    """Cached wrapper for `get_active_vas`.
+
+    Args:
+        include_paused: If True, returns Active + Paused VAs (used by the
+                        Schedule endpoint). Default False keeps the existing
+                        Active-only behavior for reports.
+    """
     import time
     now = time.time()
-    if _va_cache["data"] and now < _va_cache["expires"]:
-        return _va_cache["data"]
-    result = get_active_vas()
-    _va_cache["data"]    = result
-    _va_cache["expires"] = now + 300
+    cache_key   = "active_and_paused" if include_paused else "active"
+    cache_entry = _va_cache[cache_key]
+
+    if cache_entry["data"] and now < cache_entry["expires"]:
+        return cache_entry["data"]
+
+    result = get_active_vas(include_paused=include_paused)
+    cache_entry["data"]    = result
+    cache_entry["expires"] = now + 300
     return result
 
 
-def get_active_vas() -> list:
+def get_active_vas(include_paused: bool = False) -> list:
+    """Fetch VAs from the Notion VA database.
+
+    By default returns only VAs whose Status is "Active" (used by EOW/EOM
+    reports). Pass `include_paused=True` to also include VAs whose Status
+    is "Paused" — needed by the Schedule dashboard to surface VAs available
+    for new client deployment.
+    """
+    # Build the Notion-side status filter
+    if include_paused:
+        status_filter = {
+            "or": [
+                {"property": "Status", "select": {"equals": "Active"}},
+                {"property": "Status", "select": {"equals": "Paused"}},
+            ]
+        }
+        allowed_statuses = SCHEDULABLE_STATUSES
+    else:
+        status_filter    = {"property": "Status", "select": {"equals": "Active"}}
+        allowed_statuses = ACTIVE_STATUSES
+
     pages = query_all(DB["va"], {
         "and": [
-            {"property": "Status",     "select":       {"equals":   "Active"}},
+            status_filter,
             {"property": "Emp Status", "select":       {"equals":   "Employee"}},
             {"property": "Team",       "multi_select": {"contains": "VA Team"}},
         ]
@@ -85,8 +120,8 @@ def get_active_vas() -> list:
         teams      = get_prop(p, "Team")
 
         if not name:                                    continue
-        if status      not in ACTIVE_STATUSES:          continue
-        if emp_status  not in ACTIVE_EMP_STATUSES:      continue
+        if status     not in allowed_statuses:          continue
+        if emp_status not in ACTIVE_EMP_STATUSES:       continue
         if not any(t in ALLOWED_TEAMS for t in teams):  continue
         if any(t in EXCLUDED_TEAMS for t in teams):     continue
 
@@ -102,11 +137,8 @@ def get_active_vas() -> list:
             "contract_ids":   get_prop(p, "Contracts"),
             "start_shift":    get_prop(p, "Shift Start"),
             "end_shift":      get_prop(p, "Shift End"),
-            "status":         status,
+            "status":         get_prop(p, "Status"),
         })
-    import json
-    if pages.index(p) == 0:   # only the first VA, to keep logs short
-        print("PHONE PROP:", json.dumps(p["properties"].get("Phone"), indent=2, default=str))
 
     return sorted(vas, key=lambda v: v["name"])
 
