@@ -10,6 +10,8 @@ class Settings(BaseSettings):
     eod_cba_db_id:     str
     attendance_db_id:  str
     contracts_db_id:   str
+    clients_db_id:     str 
+    eom_reports_db_id: str  
 
     # ── Firebase ──────────────────────────────────────────────────
     firebase_service_account_json: str = ""
