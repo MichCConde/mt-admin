@@ -72,22 +72,32 @@ if (typeof document !== "undefined" && !document.getElementById("mt-eow-styles")
   document.head.appendChild(tag);
 }
 
-// ── Helpers ──────────────────────────────────────────────────────
+// ── Date helpers (timezone-safe) ─────────────────────────────────
+// IMPORTANT: never use `.toISOString().split("T")[0]` here. That converts
+// to UTC and silently shifts the date by a day for any user in a non-UTC
+// timezone (which is everyone). Always pull local Y-M-D components.
+function isoFromLocal(d) {
+  const y  = d.getFullYear();
+  const m  = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${dd}`;
+}
+
 function getWeekRange() {
   const today = new Date();
-  const day   = today.getDay();
+  const day   = today.getDay();               // 0 = Sun, 1 = Mon, ... 6 = Sat
   const mon   = new Date(today);
   mon.setDate(today.getDate() - (day === 0 ? 6 : day - 1));
   const fri = new Date(mon);
   fri.setDate(mon.getDate() + 4);
-  const fmt = d => d.toISOString().split("T")[0];
-  return { start: fmt(mon), end: fmt(fri) };
+  return { start: isoFromLocal(mon), end: isoFromLocal(fri) };
 }
 
 function shiftDate(iso, days) {
-  const d = new Date(iso + "T00:00:00");
-  d.setDate(d.getDate() + days);
-  return d.toISOString().split("T")[0];
+  // Use noon (T12:00:00) to stay safely away from any DST boundary
+  const dt = new Date(`${iso}T12:00:00`);
+  dt.setDate(dt.getDate() + days);
+  return isoFromLocal(dt);
 }
 
 function fmtDate(iso) {

@@ -58,7 +58,7 @@ function fmtContractDate(iso) {
   });
 }
 
-// ── Reusable stat box (now supports clickable variant) ────────────
+// ── Reusable stat box (supports clickable variant) ────────────────
 function StatBox({ icon: Icon, value, label, accent, onClick }) {
   const valueColor =
     accent === "warning" ? colors.warning :
@@ -180,7 +180,7 @@ function BreakdownModal({ open, title, subtitle, onClose, children }) {
           background: colors.surface,
           borderRadius: radius.lg,
           boxShadow: "0 10px 40px rgba(13,31,60,0.25)",
-          maxWidth: 720, width: "100%", maxHeight: "85vh",
+          maxWidth: 560, width: "100%", maxHeight: "85vh",
           display: "flex", flexDirection: "column",
           fontFamily: font.family,
         }}
@@ -217,7 +217,7 @@ function BreakdownModal({ open, title, subtitle, onClose, children }) {
   );
 }
 
-// ── Contracts table (used inside each breakdown modal) ───────────
+// ── Contracts table (simplified: Contract Name + Date) ───────────
 function ContractsTable({ items, dateLabel, emptyMessage }) {
   if (!items || items.length === 0) {
     return (
@@ -245,14 +245,16 @@ function ContractsTable({ items, dateLabel, emptyMessage }) {
   });
 
   return (
-    <div style={{ overflowX: "auto", border: `1px solid ${colors.border}`, borderRadius: radius.md }}>
-      <table style={{ width: "100%", borderCollapse: "collapse", minWidth: 520 }}>
+    <div style={{
+      overflowX: "auto",
+      border: `1px solid ${colors.border}`,
+      borderRadius: radius.md,
+    }}>
+      <table style={{ width: "100%", borderCollapse: "collapse" }}>
         <thead>
           <tr style={{ background: colors.surfaceAlt }}>
-            <th style={thStyle}>VA Name</th>
-            <th style={{ ...thStyle, textAlign: "center", width: 110 }}>Community</th>
-            <th style={thStyle}>Client</th>
-            <th style={{ ...thStyle, whiteSpace: "nowrap" }}>{dateLabel}</th>
+            <th style={thStyle}>Contract Name</th>
+            <th style={{ ...thStyle, textAlign: "right", width: 140 }}>{dateLabel}</th>
           </tr>
         </thead>
         <tbody>
@@ -261,20 +263,22 @@ function ContractsTable({ items, dateLabel, emptyMessage }) {
               key={item.contract_id || i}
               style={{ background: i % 2 === 0 ? colors.surface : colors.surfaceAlt }}
             >
-              <td style={{ ...tdStyle(i), fontWeight: 600, color: colors.textPrimary, whiteSpace: "nowrap" }}>
-                {item.va_name && item.va_name !== "Unknown VA"
-                  ? <VANameLink name={item.va_name} />
-                  : <span style={{ color: colors.textFaint }}>{item.va_name || "—"}</span>
-                }
+              <td style={{
+                ...tdStyle(i),
+                fontWeight: 600,
+                color: colors.textPrimary,
+              }}>
+                {item.contract_name || "(Untitled)"}
               </td>
-              <td style={{ ...tdStyle(i), textAlign: "center" }}>
-                {item.community && item.community !== "—"
-                  ? <CommunityBadge community={item.community} />
-                  : <span style={{ color: colors.textFaint, fontSize: font.sm }}>—</span>
-                }
+              <td style={{
+                ...tdStyle(i),
+                textAlign: "right",
+                whiteSpace: "nowrap",
+                color: colors.textBody,
+                fontVariantNumeric: "tabular-nums",
+              }}>
+                {fmtContractDate(item.date)}
               </td>
-              <td style={tdStyle(i)}>{item.client}</td>
-              <td style={{ ...tdStyle(i), whiteSpace: "nowrap" }}>{fmtContractDate(item.date)}</td>
             </tr>
           ))}
         </tbody>
@@ -287,14 +291,14 @@ function ContractsTable({ items, dateLabel, emptyMessage }) {
 const BREAKDOWN_CONFIGS = {
   new_onboardings: {
     title:        "New Onboardings",
-    subtitle:     "Contracts that started recently",
+    subtitle:     "Contracts that started this week",
     dateLabel:    "Start Date",
-    emptyMessage: "No new onboardings to show.",
+    emptyMessage: "No new onboardings this week.",
   },
   upcoming_onboardings: {
     title:        "Upcoming Onboardings",
     subtitle:     "Drafted contracts starting later this week",
-    dateLabel:    "Expected Start",
+    dateLabel:    "Start Date",
     emptyMessage: "No upcoming onboardings this week.",
   },
   total_paused: {

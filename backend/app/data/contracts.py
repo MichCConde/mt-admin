@@ -9,6 +9,7 @@ def _build_contract(page: dict) -> dict:
     return {
         "contract_id":          page["id"],
         "client_name":          _get_contract_client(page),
+        "client_id":            _get_contract_client_id(page),
         "contract_name":        get_prop(page, "Contract Name"),
         "start_shift":          get_prop(page, "Shift Start"),
         "end_shift":            get_prop(page, "Shift End"),
@@ -84,7 +85,7 @@ def get_all_contracts() -> list:
         all_pages.extend(pages)
     return [_build_contract(page) for page in all_pages]
 
-# ── Helper: read Client property regardless of trailing space ─────
+# ── Helpers: read Client property regardless of trailing space ────
 
 _UUID_RE = re.compile(r'^[0-9a-f]{8}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{4}-?[0-9a-f]{12}$', re.IGNORECASE)
 
@@ -111,3 +112,22 @@ def _get_contract_client(page: dict) -> str:
             val = cn.split("|", 1)[1].strip()
 
     return val
+
+
+def _get_contract_client_id(page: dict) -> str | None:
+    """
+    Return the Notion page ID of the linked Client, or None.
+    The Client relation can include both names and UUIDs in the same list;
+    we want the UUID side so we can look up email/company in the Clients DB.
+    """
+    val = get_prop(page, "Client ") or get_prop(page, "Client")
+    if isinstance(val, list):
+        for v in val:
+            s = str(v).strip()
+            if _UUID_RE.match(s):
+                return s
+    elif isinstance(val, str):
+        s = val.strip()
+        if _UUID_RE.match(s):
+            return s
+    return None

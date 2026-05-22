@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Query, HTTPException
+from pydantic import BaseModel, Field
 from datetime import date as date_type
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import calendar
@@ -6,6 +7,7 @@ from app.notion import (
     get_active_vas, get_eod_for_va, get_attendance_for_date,
     get_active_contracts_by_id, va_works_on_date,
 )
+from app.services.eom_generator import generate_eom_reports_for_va
 
 router = APIRouter()
 
@@ -41,6 +43,8 @@ def _fetch_attendance_parallel(dates: list[str]) -> dict[str, list]:
     return results
 
 
+# ── /api/eom/data (unchanged) ─────────────────────────────────────
+
 @router.get("/data")
 def get_eom_data(
     va_name:   str = Query(...),
@@ -59,7 +63,6 @@ def get_eom_data(
             None,
         )
         if not va:
-            # Fuzzy name fallback
             va = next(
                 (v for v in vas if _names_match(va_name, v["name"])),
                 None,
@@ -70,7 +73,6 @@ def get_eom_data(
         community = va.get("community", "Main")
         reports   = get_eod_for_va(va["name"], community, year, month)
 
-        # Also try fuzzy name match for reports
         if not reports:
             for v in vas:
                 if _names_match(va_name, v["name"]) and v["name"] != va["name"]:
@@ -78,7 +80,6 @@ def get_eom_data(
                     if reports:
                         break
 
-        # ── Resolve contracts ─────────────────────────────────────
         contracts_by_id = get_active_contracts_by_id()
         active_contracts = [
             contracts_by_id[cid]
@@ -86,7 +87,6 @@ def get_eom_data(
             if cid in contracts_by_id
         ]
 
-        # ── Attendance for the month ──────────────────────────────
         workdays = _workdays_in_month(year, month)
         attendance_by_date = _fetch_attendance_parallel(workdays)
 
@@ -96,8 +96,6 @@ def get_eom_data(
         attendance_records = []
         days_clocked_in    = 0
         days_missing_clock = 0
-        late_clockins      = 0
-        early_clockins     = 0
 
         for d in workdays:
             if not va_works_on_date(va, d):
@@ -121,11 +119,8 @@ def get_eom_data(
             else:
                 days_missing_clock += 1
 
-        # ── Compute stats ─────────────────────────────────────────
         submitted_dates = {r["date"] for r in reports}
-        expected_workdays = [
-            d for d in workdays if va_works_on_date(va, d)
-        ]
+        expected_workdays = [d for d in workdays if va_works_on_date(va, d)]
         missing_eod_dates = [d for d in expected_workdays if d not in submitted_dates]
 
         on_time_count = sum(1 for r in reports if r.get("punctuality", {}).get("on_time"))
@@ -144,7 +139,6 @@ def get_eom_data(
             "days_missing_clock": days_missing_clock,
         }
 
-        # ── CBA KPIs ─────────────────────────────────────────────
         kpis = None
         if community == "CBA":
             kpis = {
@@ -161,13 +155,9 @@ def get_eom_data(
                 kpis["avg_website_apps"] = round(kpis["total_website_apps"] / d, 1)
                 kpis["avg_follow_ups"]   = round(kpis["total_follow_ups"]   / d, 1)
 
-        # ── Collect text content for AI summarization ─────────────
         daily_entries = []
         for r in reports:
-            entry = {
-                "date":   r["date"],
-                "client": r.get("client", ""),
-            }
+            entry = {"date": r["date"], "client": r.get("client", "")}
             if community == "Main":
                 entry["task_completed"] = r.get("task_completed", "")
                 entry["daily_summary"]  = r.get("daily_summary", "")
@@ -195,5 +185,35 @@ def get_eom_data(
 
     except HTTPException:
         raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── /api/eom/generate (NEW) ───────────────────────────────────────
+
+class GenerateRequest(BaseModel):
+    va_name: str = Field(..., min_length=1)
+    year:    int = Field(..., ge=2024, le=2100)
+    month:   int = Field(..., ge=1, le=12)
+
+
+@router.post("/generate")
+def generate(req: GenerateRequest):
+    """
+    Generate EOM reports for one VA across all their active clients and
+    publish them directly to the EOM Reports Notion database.
+
+    Creates one page per VA-client pairing. Returns a structured result
+    with the URLs of created pages plus any per-client errors.
+
+    Total time scales with number of clients (~10–15 sec each).
+    """
+    try:
+        result = generate_eom_reports_for_va(
+            va_name=req.va_name,
+            year=req.year,
+            month=req.month,
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

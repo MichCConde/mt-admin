@@ -40,7 +40,7 @@ def _parse_date(s) -> date | None:
             return None
 
 
-# ── Existing helpers (unchanged) ──────────────────────────────────
+# ── Existing helpers ──────────────────────────────────────────────
 
 def prev_workday(d: datetime, offset: int = 1) -> str:
     current = d
@@ -54,6 +54,13 @@ def prev_workday(d: datetime, offset: int = 1) -> str:
 
 def get_missing_for_date(vas: list, date_str: str,
                          contracts_by_va: dict) -> set[str]:
+    """
+    Returns a set of lowercase VA names who were expected to submit EODs
+    on the given date but didn't.
+
+    Flexible VAs are EXCLUDED — they don't follow a fixed schedule and
+    don't submit EODs, so they should never appear in missing/flagged lists.
+    """
     eod_main = get_eod_main_for_date(date_str)
     eod_cba  = get_eod_cba_for_date(date_str)
 
@@ -65,6 +72,10 @@ def get_missing_for_date(vas: list, date_str: str,
     missing = set()
 
     for va in vas:
+        # Skip flexible VAs — they don't submit EOD reports
+        if va.get("is_flexible") or va.get("flexible"):
+            continue
+
         if not va_works_on_date(va, date_str):
             continue
 
@@ -161,6 +172,29 @@ def _build_activity_feed(date_str: str, vas: list) -> list[dict]:
 
 # ── Weekly activity computation ───────────────────────────────────
 
+def _flatten_title(raw) -> str:
+    """
+    Notion title properties come through as either a string, a list of
+    strings, or a list of text dicts. Flatten any of these into a single
+    clean string. Returns "" when there's nothing usable.
+    """
+    if raw is None:
+        return ""
+    if isinstance(raw, list):
+        parts = []
+        for item in raw:
+            if isinstance(item, dict):
+                parts.append(
+                    item.get("plain_text")
+                    or item.get("text", {}).get("content")
+                    or ""
+                )
+            else:
+                parts.append(str(item))
+        return " ".join(p for p in parts if p).strip()
+    return str(raw).strip()
+
+
 def _compute_contract_metrics(all_contracts: list, vas: list, today: date) -> dict:
     """
     Computes contract-related stats for the Dashboard.
@@ -186,14 +220,18 @@ def _compute_contract_metrics(all_contracts: list, vas: list, today: date) -> di
             va_by_contract_id[cid] = va
 
     def _make_item(c: dict, date_value) -> dict:
-        cid = c.get("id")
+        # `_build_contract` in app/data/contracts.py uses "contract_id"
+        # as the key for the page ID, not "id"
+        cid = c.get("contract_id") or c.get("id")
         va = va_by_contract_id.get(cid) or {}
+        contract_name = _flatten_title(c.get("contract_name")) or "(Untitled)"
         return {
-            "va_name":     va.get("name") or c.get("va_name") or "Unknown VA",
-            "client":      c.get("client_name") or c.get("client") or "—",
-            "community":   va.get("community") or "—",
-            "date":        date_value.isoformat() if date_value else None,
-            "contract_id": cid,
+            "contract_name": contract_name,
+            "va_name":       va.get("name") or c.get("va_name") or "Unknown VA",
+            "client":        c.get("client_name") or c.get("client") or "—",
+            "community":     va.get("community") or "—",
+            "date":          date_value.isoformat() if date_value else None,
+            "contract_id":   cid,
         }
 
     paused_total = 0

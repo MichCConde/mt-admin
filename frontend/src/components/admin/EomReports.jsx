@@ -4,8 +4,8 @@ import {
   Clock, UserX, FileCheck, Flag, Copy, Users, RefreshCw, AlertTriangle,
   CheckCircle2, XCircle, Timer, CalendarCheck, ArrowRight, Zap, X,
   ArrowUpRight,
-  FileText, Calendar, ClipboardList, Download, Sparkles,
-  UserCheck, Upload,
+  FileText, Calendar, Sparkles,
+  UserCheck,
 } from "lucide-react";
 import { colors, font, radius, shadow } from "../../styles/tokens";
 import { apiFetch } from "../../api";
@@ -23,8 +23,6 @@ import { Skeleton } from "../ui/Skeleton";
 
 const MONTHS = ["January","February","March","April","May","June",
                 "July","August","September","October","November","December"];
-
-const LOGO_URL = "https://images.leadconnectorhq.com/image/f_webp/q_80/r_1200/u_https://assets.cdn.filesafe.space/y0alJIjtUPUtCbTJC8PG/media/68710a1e0d2af8dd5e7394be.png";
 
 const CACHE_MONTH = (CACHE_KEYS && CACHE_KEYS.EOM_ALL) || "mt_eom_all";
 const STAT_RADIUS = 8;
@@ -67,6 +65,12 @@ if (typeof document !== "undefined" && !document.getElementById("mt-eom-styles")
     .mt-eom-modal-backdrop-out { animation: mt-eom-modal-backdrop-out .18s ease-out forwards; }
     .mt-eom-modal-card-in      { animation: mt-eom-modal-card-in .24s cubic-bezier(.2,.8,.2,1) forwards; }
     .mt-eom-modal-card-out     { animation: mt-eom-modal-card-out .18s cubic-bezier(.4,0,1,1) forwards; }
+
+    @keyframes mt-eom-spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+    .mt-eom-spin { animation: mt-eom-spin .8s linear infinite; }
   `;
   document.head.appendChild(tag);
 }
@@ -1694,403 +1698,219 @@ function IndividualAnalysisTab({ monthData, preselectVA, vaList, year, month, se
 }
 
 // ─────────────────────────────────────────────────────────────────
-// ── GENERATE REPORT TAB (existing CSV upload + AI flow) ──────────
+// ── GENERATE REPORT TAB (backend-driven, publishes to Notion) ────
 // ─────────────────────────────────────────────────────────────────
 
-function parseCSV(text) {
-  const lines = text.trim().split("\n");
-  if (lines.length < 2) return { headers: [], rows: [], community: "Unknown" };
-  const headers = lines[0].split(",").map(h => h.trim().replace(/^"|"$/g, ""));
-  const rows = lines.slice(1).map(line => {
-    const vals = [];
-    let cur = "", inQ = false;
-    for (const ch of line) {
-      if (ch === '"') inQ = !inQ;
-      else if (ch === "," && !inQ) { vals.push(cur.trim()); cur = ""; }
-      else cur += ch;
+function GenerateReportTab({ vaList }) {
+  const today = new Date();
+  const [vaName, setVaName] = useState("");
+  const [year,   setYear]   = useState(today.getFullYear());
+  const [month,  setMonth]  = useState(today.getMonth() + 1); // current month
+  const [loading, setLoading] = useState(false);
+  const [result,  setResult]  = useState(null);
+  const [error,   setError]   = useState("");
+
+  async function handleGenerate() {
+    if (!vaName) {
+      setError("Pick a VA first.");
+      return;
     }
-    vals.push(cur.trim());
-    const obj = {};
-    headers.forEach((h, i) => { obj[h] = (vals[i] || "").replace(/^"|"$/g, ""); });
-    return obj;
-  });
-  const hLower = headers.map(h => h.toLowerCase());
-  const community = hLower.some(h =>
-    h.includes("new leads") || h.includes("email app") || h.includes("follow up")
-  ) ? "CBA" : "Main";
-  return { headers, rows, community };
-}
-
-function buildPrompt(rows, community, vaName, month, year, clients) {
-  const entries = rows.map(r => {
-    const parts = Object.entries(r)
-      .filter(([k, v]) => v && k.toLowerCase() !== "name")
-      .map(([k, v]) => `${k}: ${v}`);
-    return parts.join(" | ");
-  }).join("\n");
-
-  const kpiBlock = community === "CBA" ? `
-
-## KPI Summary
-Structured breakdown of total leads sourced, email applications, website applications, follow-ups with totals and daily averages. Present as a clean list.` : "";
-
-  return `You are an HR assistant at Monster Task. Generate a professional End-of-Month performance report.
-
-VA Name: ${vaName}
-Community: ${community}
-Month: ${month} ${year}
-Client(s): ${clients || "N/A"}
-Total Reports: ${rows.length}
-
-Daily EOD Entries:
-${entries}
-
-Generate the report with these EXACT section headers. Respond ONLY with the content, no markdown code fences:
-
-## Overview
-2-3 sentence summary of overall performance this month.${kpiBlock}
-
-## Tasks Completed
-Categorized summary of all tasks and responsibilities handled. Group similar work together. Be specific but concise.
-
-## Key Achievements
-Notable accomplishments or standout work. If nothing exceptional, note consistent reliability.
-
-## Attendance & Punctuality
-Summary based on the data — days reported, any gaps, submission patterns.
-
-## Notes
-Observations, recommendations, or flags for the manager.`;
-}
-
-function RenderReport({ text, onChange }) {
-  return (
-    <div
-      contentEditable
-      suppressContentEditableWarning
-      onBlur={e => onChange(e.currentTarget.innerText)}
-      style={{
-        outline: "none", minHeight: 200, lineHeight: 1.7,
-        fontSize: font.sm, color: colors.textPrimary, whiteSpace: "pre-wrap",
-      }}
-      dangerouslySetInnerHTML={{
-        __html: text
-          .replace(/^## (.+)$/gm,
-            `<h3 style="font-size:16px;font-weight:800;color:${colors.textPrimary};margin:20px 0 6px;border-bottom:2px solid ${colors.teal};padding-bottom:4px;">$1</h3>`)
-          .replace(/^- (.+)$/gm,
-            '<div style="padding-left:16px;margin:2px 0;">• $1</div>')
-          .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-          .replace(/\n\n/g, '<br/><br/>')
-      }}
-    />
-  );
-}
-
-function copyReport(text, vaName, monthLabel, yearLabel) {
-  const header = `Monster Task — End-of-Month Report\n${vaName} · ${monthLabel} ${yearLabel}\n${"─".repeat(44)}\n\n`;
-  navigator.clipboard.writeText(header + text);
-}
-
-function GenerateReportTab() {
-  const [parsed,   setParsed]   = useState(null);
-  const [vaName,   setVaName]   = useState("");
-  const [monthSel, setMonthSel] = useState("");
-  const [yearSel,  setYearSel]  = useState(new Date().getFullYear().toString());
-  const [clients,  setClients]  = useState("");
-  const [report,   setReport]   = useState("");
-  const [loading,  setLoading]  = useState(false);
-  const [err,      setErr]      = useState("");
-  const [copied,   setCopied]   = useState(false);
-  const fileRef = useRef();
-
-  function handleFile(file) {
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = ev => {
-      const text = ev.target.result;
-      const p = parseCSV(text);
-      setParsed(p);
-
-      const nameCol = p.headers.find(h => h.toLowerCase() === "name");
-      if (nameCol && p.rows[0]) setVaName(p.rows[0][nameCol]);
-
-      const clientCol = p.headers.find(h => h.toLowerCase() === "client");
-      if (clientCol) {
-        const unique = [...new Set(p.rows.map(r => r[clientCol]).filter(Boolean))];
-        setClients(unique.join(", "));
-      }
-      setReport(""); setErr("");
-    };
-    reader.readAsText(file);
+    setLoading(true);
+    setError("");
+    setResult(null);
+    try {
+      const res = await apiFetch("/api/eom/generate", {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ va_name: vaName, year, month }),
+      });
+      setResult(res);
+      logActivity(LOG_TYPES.EOD_CHECK, `EOM reports published for ${vaName} (${fmtMonthYear(year, month)})`, {
+        va_name: vaName, year, month,
+        pages_created: res.pages?.length || 0,
+        errors: res.errors?.length || 0,
+      });
+    } catch (e) {
+      setError(e.message || "Failed to generate reports.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   function reset() {
-    setParsed(null); setVaName(""); setClients("");
-    setReport(""); setErr(""); setMonthSel("");
+    setResult(null);
+    setError("");
   }
-
-  async function generateAIReport() {
-    if (!parsed || !vaName || !monthSel) return;
-    setLoading(true); setErr(""); setReport("");
-    try {
-      const prompt = buildPrompt(parsed.rows, parsed.community, vaName, monthSel, yearSel, clients);
-      const resp = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-20250514",
-          max_tokens: 2500,
-          messages: [{ role: "user", content: prompt }],
-        }),
-      });
-      const data = await resp.json();
-      const text = data.content?.map(c => c.text || "").join("\n") || "";
-      if (!text) throw new Error("Empty response from AI");
-      setReport(text);
-    } catch (e) {
-      setErr(e.message || "Failed to generate report");
-    } finally { setLoading(false); }
-  }
-
-  function handleCopy() {
-    copyReport(report, vaName, monthSel, yearSel);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
-  }
-
-  const inputStyle = {
-    width: "100%", padding: "8px 12px", boxSizing: "border-box",
-    border: `1.5px solid ${colors.border}`, borderRadius: radius.md,
-    fontSize: font.sm, fontFamily: font.family, outline: "none",
-    color: colors.textPrimary, background: colors.surface,
-  };
-  const smallLabelStyle = {
-    fontSize: font.xs, fontWeight: 700, color: colors.textMuted,
-    display: "block", marginBottom: 4,
-  };
 
   return (
-    <div>
-      {!parsed && (
-        <div
-          onDrop={e => { e.preventDefault(); handleFile(e.dataTransfer.files?.[0]); }}
-          onDragOver={e => e.preventDefault()}
-          onClick={() => fileRef.current?.click()}
-          style={{
-            border: `2px dashed ${colors.teal}`, borderRadius: radius.lg,
-            padding: "56px 32px", textAlign: "center", cursor: "pointer",
-            background: colors.surface, transition: "background .15s",
-          }}
-          onMouseEnter={e => e.currentTarget.style.background = colors.tealLight}
-          onMouseLeave={e => e.currentTarget.style.background = colors.surface}
-        >
-          <input
-            ref={fileRef} type="file" accept=".csv"
-            onChange={e => handleFile(e.target.files?.[0])}
-            style={{ display: "none" }}
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <Card style={{ overflow: "visible" }}>
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontSize: font.base, fontWeight: 800, color: colors.textPrimary }}>
+            Generate &amp; Publish EOM Reports
+          </div>
+          <div style={{ fontSize: font.sm, color: colors.textMuted, marginTop: 4 }}>
+            Creates one Notion page per VA-client pairing in the EOM Reports
+            database. Reports are generated with Claude and pushed directly
+            to Notion. Defaults to the current month.
+          </div>
+        </div>
+
+        <div style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
+          <VASearchSelect
+            vas={vaList}
+            value={vaName}
+            onChange={setVaName}
+            placeholder={vaList.length ? "Search or pick a VA…" : "VA list not loaded yet"}
           />
-          <Upload size={36} color={colors.teal} strokeWidth={1.5} style={{ marginBottom: 12 }} />
-          <div style={{ fontSize: font.lg, fontWeight: 700, color: colors.textPrimary }}>
-            Drop a CSV here or click to upload
-          </div>
-          <div style={{ fontSize: font.sm, color: colors.textMuted, marginTop: 6 }}>
-            Export the VA's EOD reports from Notion as CSV
-          </div>
+          <Select
+            label="Month"
+            value={month}
+            onChange={e => setMonth(Number(e.target.value))}
+            options={MONTH_OPTIONS}
+            style={{ minWidth: 140 }}
+          />
+          <Select
+            label="Year"
+            value={year}
+            onChange={e => setYear(Number(e.target.value))}
+            options={YEAR_OPTIONS}
+            style={{ minWidth: 110 }}
+          />
+          <Button
+            icon={Sparkles}
+            onClick={handleGenerate}
+            disabled={loading || !vaName}
+            style={{ alignSelf: "flex-end", height: 38 }}
+          >
+            {loading ? "Generating…" : "Generate & Publish"}
+          </Button>
         </div>
+      </Card>
+
+      {error && <StatusBox variant="danger">{error}</StatusBox>}
+
+      {loading && (
+        <Card>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "4px 0" }}>
+            <div
+              className="mt-eom-spin"
+              style={{
+                width: 24, height: 24, borderRadius: "50%",
+                border: `2.5px solid ${colors.tealLight}`,
+                borderTopColor: colors.teal,
+                flexShrink: 0,
+              }}
+            />
+            <div style={{ minWidth: 0 }}>
+              <div style={{ fontSize: font.base, fontWeight: 700, color: colors.textPrimary }}>
+                Generating reports for {vaName}…
+              </div>
+              <div style={{ fontSize: font.sm, color: colors.textMuted, marginTop: 2 }}>
+                This takes about 10–15 seconds per client. Each report writes to
+                Notion immediately when finished.
+              </div>
+            </div>
+          </div>
+        </Card>
       )}
 
-      {parsed && !report && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-          <Card>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: font.base, fontWeight: 700, color: colors.textPrimary }}>
-                  {parsed.rows.length} reports loaded
-                </span>
-                <CommunityBadge community={parsed.community} />
-              </div>
-              <Button variant="ghost" icon={X} onClick={reset} size="sm">
-                Change CSV
-              </Button>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
-              <div>
-                <label style={smallLabelStyle}>VA Name</label>
-                <input value={vaName} onChange={e => setVaName(e.target.value)} style={inputStyle}
-                  onFocus={e => e.target.style.borderColor = colors.teal}
-                  onBlur={e => e.target.style.borderColor = colors.border}
-                />
-              </div>
-              <div>
-                <label style={smallLabelStyle}>Client(s)</label>
-                <input value={clients} onChange={e => setClients(e.target.value)} style={inputStyle}
-                  onFocus={e => e.target.style.borderColor = colors.teal}
-                  onBlur={e => e.target.style.borderColor = colors.border}
-                />
-              </div>
-              <div>
-                <label style={smallLabelStyle}>Month</label>
-                <select value={monthSel} onChange={e => setMonthSel(e.target.value)} style={{ ...inputStyle, background: colors.surface }}>
-                  <option value="">Select month</option>
-                  {MONTHS.map(m => <option key={m} value={m}>{m}</option>)}
-                </select>
-              </div>
-              <div>
-                <label style={smallLabelStyle}>Year</label>
-                <input value={yearSel} onChange={e => setYearSel(e.target.value)} style={inputStyle}
-                  onFocus={e => e.target.style.borderColor = colors.teal}
-                  onBlur={e => e.target.style.borderColor = colors.border}
-                />
-              </div>
-            </div>
-
-            <div style={{
-              marginTop: 16, maxHeight: 180, overflowY: "auto",
-              border: `1px solid ${colors.border}`, borderRadius: radius.md,
-            }}>
-              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11 }}>
-                <thead>
-                  <tr style={{ background: colors.surfaceAlt }}>
-                    {parsed.headers.slice(0, 6).map(h => (
-                      <th key={h} style={{
-                        padding: "6px 8px", textAlign: "left", fontWeight: 700,
-                        color: colors.textMuted, borderBottom: `1px solid ${colors.border}`,
-                        whiteSpace: "nowrap", fontSize: font.xs,
-                      }}>
-                        {h.length > 20 ? h.slice(0, 18) + "…" : h}
-                      </th>
-                    ))}
-                    {parsed.headers.length > 6 && (
-                      <th style={{ padding: "6px 8px", color: colors.textFaint, borderBottom: `1px solid ${colors.border}`, fontSize: font.xs }}>
-                        +{parsed.headers.length - 6} cols
-                      </th>
-                    )}
-                  </tr>
-                </thead>
-                <tbody>
-                  {parsed.rows.slice(0, 5).map((r, i) => (
-                    <tr key={i}>
-                      {parsed.headers.slice(0, 6).map(h => (
-                        <td key={h} style={{
-                          padding: "5px 8px", borderBottom: `1px solid ${colors.border}`,
-                          color: colors.textBody, maxWidth: 140, overflow: "hidden",
-                          textOverflow: "ellipsis", whiteSpace: "nowrap",
-                        }}>
-                          {r[h] || "—"}
-                        </td>
-                      ))}
-                      {parsed.headers.length > 6 && (
-                        <td style={{ padding: "5px 8px", borderBottom: `1px solid ${colors.border}`, color: colors.textFaint }}>…</td>
-                      )}
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {parsed.rows.length > 5 && (
-                <div style={{ padding: "6px 8px", fontSize: 11, color: colors.textMuted, textAlign: "center" }}>
-                  + {parsed.rows.length - 5} more rows
-                </div>
-              )}
-            </div>
-
-            <div style={{ marginTop: 16 }}>
-              <Button
-                icon={Sparkles}
-                onClick={generateAIReport}
-                disabled={loading || !vaName || !monthSel}
-                style={{ width: "100%", height: 44, justifyContent: "center", fontSize: font.base }}
-              >
-                {loading ? "Generating report…" : "Generate EOM Report"}
-              </Button>
-            </div>
-            {err && <StatusBox variant="danger" style={{ marginTop: 12 }}>{err}</StatusBox>}
-          </Card>
-        </div>
-      )}
-
-      {report && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
-            <Button variant="ghost" icon={X} onClick={() => setReport("")} size="sm">
-              Back to data
-            </Button>
-            <Button variant="ghost" icon={Sparkles} onClick={generateAIReport} disabled={loading} size="sm">
-              {loading ? "Generating…" : "Regenerate"}
-            </Button>
-            <Button icon={copied ? ClipboardList : Download} onClick={handleCopy} size="sm">
-              {copied ? "Copied!" : "Copy to Clipboard"}
-            </Button>
-          </div>
-
+      {result && !loading && (
+        <Card>
           <div style={{
-            background: colors.surface, borderRadius: radius.lg, overflow: "hidden",
-            border: `1px solid ${colors.border}`, boxShadow: shadow.card,
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+            marginBottom: 16, gap: 12, flexWrap: "wrap",
           }}>
-            <div style={{ background: "#0D1F3C", padding: "24px 32px" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 10 }}>
-                <img src={LOGO_URL} alt="MT" style={{ height: 32 }} />
-                <span style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>Monster Task</span>
+            <div>
+              <div style={{ fontSize: font.base, fontWeight: 800, color: colors.textPrimary }}>
+                {result.pages.length > 0
+                  ? `Created ${result.pages.length} Notion page${result.pages.length !== 1 ? "s" : ""}`
+                  : "No pages created"}
               </div>
-              <div style={{ fontSize: 20, fontWeight: 800, color: "#fff" }}>End-of-Month Report</div>
-              <div style={{ fontSize: 13, color: "#4A6080", marginTop: 2 }}>{monthSel} {yearSel}</div>
-            </div>
-
-            <div style={{
-              background: colors.teal, padding: "12px 32px",
-              display: "flex", justifyContent: "space-between", alignItems: "center",
-            }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                <span style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>{vaName}</span>
-                <span style={{
-                  fontSize: 11, fontWeight: 700, padding: "2px 10px", borderRadius: 4,
-                  color: colors.teal, background: "rgba(255,255,255,0.9)",
-                }}>
-                  {parsed?.community}
-                </span>
-              </div>
-              {clients && (
-                <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.85)" }}>{clients}</span>
+              {result.errors.length > 0 && (
+                <div style={{ fontSize: font.sm, color: colors.warning, marginTop: 2 }}>
+                  {result.errors.length} client{result.errors.length !== 1 ? "s" : ""} skipped or failed
+                </div>
               )}
             </div>
-
-            <div style={{ display: "flex", gap: 10, padding: "20px 32px", flexWrap: "wrap" }}>
-              {[
-                { label: "REPORTS",   value: parsed?.rows.length,    color: colors.teal },
-                { label: "COMMUNITY", value: parsed?.community,       color: parsed?.community === "CBA" ? "#C2410C" : "#1D4ED8" },
-                { label: "PERIOD",    value: `${monthSel} ${yearSel}`, color: colors.textPrimary },
-              ].map((s, i) => (
-                <div key={i} style={{
-                  background: colors.surfaceAlt, borderRadius: radius.md,
-                  padding: "10px 18px", textAlign: "center", minWidth: 90,
-                }}>
-                  <div style={{ fontSize: 18, fontWeight: 800, color: s.color }}>{s.value}</div>
-                  <div style={{ fontSize: 10, fontWeight: 700, color: colors.textMuted }}>{s.label}</div>
-                </div>
-              ))}
-            </div>
-
-            <div style={{ padding: "8px 32px 32px" }}>
-              <div style={{
-                fontSize: font.xs, color: colors.teal, marginBottom: 12,
-                background: colors.tealLight, padding: "6px 12px", borderRadius: radius.sm,
-                fontWeight: 600,
-              }}>
-                ✏️ Click anywhere in the report below to edit directly
-              </div>
-              <RenderReport text={report} onChange={setReport} />
-            </div>
-
-            <div style={{
-              background: colors.surfaceAlt, padding: "14px 32px",
-              borderTop: `1px solid ${colors.border}`,
-            }}>
-              <div style={{ fontSize: 11, color: colors.textFaint }}>
-                This report was generated by MT Admin · Monster Task © {yearSel}
-              </div>
-            </div>
+            <Button variant="ghost" icon={X} onClick={reset} size="sm">
+              Clear
+            </Button>
           </div>
-        </div>
+
+          {result.pages.length === 0 && result.errors.length === 0 && (
+            <StatusBox variant="info">
+              The API returned an empty result. Check that the VA has active
+              contracts and EOD reports in the selected month.
+            </StatusBox>
+          )}
+
+          {result.pages.map((p, i) => (
+            <a
+              key={`p-${i}`}
+              href={p.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 14px", marginBottom: 8,
+                border: `1px solid ${colors.successBorder}`,
+                background: colors.successLight,
+                borderRadius: radius.md,
+                textDecoration: "none",
+                transition: "transform .12s, box-shadow .12s",
+              }}
+              onMouseEnter={e => {
+                e.currentTarget.style.transform = "translateY(-1px)";
+                e.currentTarget.style.boxShadow = "0 2px 8px rgba(16,185,129,0.15)";
+              }}
+              onMouseLeave={e => {
+                e.currentTarget.style.transform = "translateY(0)";
+                e.currentTarget.style.boxShadow = "none";
+              }}
+            >
+              <CheckCircle2 size={20} color={colors.success} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>
+                  {p.client}
+                </div>
+                <div style={{ fontSize: font.xs, color: colors.textMuted }}>
+                  Published to Notion
+                </div>
+              </div>
+              <span style={{
+                fontSize: font.xs, fontWeight: 700, color: colors.success,
+                display: "flex", alignItems: "center", gap: 4,
+                textTransform: "uppercase", letterSpacing: "0.04em",
+              }}>
+                Open <ArrowUpRight size={12} strokeWidth={2.5} />
+              </span>
+            </a>
+          ))}
+
+          {result.errors.map((err, i) => (
+            <div
+              key={`e-${i}`}
+              style={{
+                display: "flex", alignItems: "center", gap: 12,
+                padding: "12px 14px", marginBottom: 8,
+                border: `1px solid ${colors.warningBorder}`,
+                background: colors.warningLight,
+                borderRadius: radius.md,
+              }}
+            >
+              <AlertTriangle size={20} color={colors.warning} strokeWidth={2.25} style={{ flexShrink: 0 }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: font.sm, fontWeight: 700, color: colors.textPrimary }}>
+                  {err.client || "Unknown client"}
+                </div>
+                <div style={{ fontSize: font.xs, color: colors.textMuted }}>
+                  {err.error}
+                </div>
+              </div>
+            </div>
+          ))}
+        </Card>
       )}
     </div>
   );
@@ -2185,7 +2005,7 @@ export default function EomReports() {
             onGenerate={() => generate(false)}
           />
         )}
-        {activeTab === "generate" && <GenerateReportTab />}
+        {activeTab === "generate" && <GenerateReportTab vaList={vaList} />}
       </div>
     </div>
   );
