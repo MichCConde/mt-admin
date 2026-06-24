@@ -204,8 +204,8 @@ def _compute_contract_metrics(all_contracts: list, vas: list, today: date) -> di
 
     All categories are scoped to the CURRENT WEEK (Mon → Sun):
       - paused_contracts:     ALL contracts with status=Paused (all-time, top-level KPI)
-      - new_onboardings:      Start Date in [this_mon, today] — already happened this week
-      - upcoming_onboardings: status in (Draft, Rescheduled) AND Start Date in (today, this_sun]
+      - new_onboardings:      Start Date in [this_mon, today], excluding Draft/Rescheduled starting today
+      - upcoming_onboardings: status in (Draft, Rescheduled) AND Start Date in [today, this_sun]
       - total_paused:         status=Paused AND Paused Date in [this_mon, this_sun]
       - total_ended:          status=Ended AND End Date in [this_mon, this_sun]
     """
@@ -247,17 +247,22 @@ def _compute_contract_metrics(all_contracts: list, vas: list, today: date) -> di
         if status == "Paused":
             paused_total += 1
 
-        # New onboardings: Start Date already happened this week
-        # (this Monday → today, ANY status)
-        if start_date and this_mon <= start_date <= today:
+        # New onboardings: Start Date in [this_mon, today], EXCEPT
+        # Draft/Rescheduled contracts starting today — those go to
+        # Upcoming since the onboarding isn't finalized yet.
+        if (
+            start_date
+            and this_mon <= start_date <= today
+            and not (start_date == today and status in ("Draft", "Rescheduled"))
+        ):
             new_items.append(_make_item(c, start_date))
 
-        # Upcoming onboardings: Draft or Rescheduled AND Start Date in
-        # the future but still within this week (tomorrow → this Sunday)
+        # Upcoming onboardings: Draft or Rescheduled AND Start Date is
+        # today or later this week (today → this Sunday).
         if (
             status in ("Draft", "Rescheduled")
             and start_date
-            and today < start_date <= this_sun
+            and today <= start_date <= this_sun
         ):
             upcoming_items.append(_make_item(c, start_date))
 

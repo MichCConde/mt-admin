@@ -932,7 +932,7 @@ function IndividualProfileTab({ vas }) {
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
-      <Card>
+      <Card style={{ overflow: "visible" }}>
         <VASearchSelect
           vas={vas}
           value={selectedVA}
